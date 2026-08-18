@@ -16,6 +16,12 @@ jobs:
   release:
     runs-on: windows-latest
 
+    # Lifted to job level because the secrets context is not available in a step-level `if`;
+    # env is, so the signing step can gate on whether a certificate was configured.
+    env:
+      SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+      SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -51,16 +57,13 @@ jobs:
       # SIGNING_PFX_BASE64 and SIGNING_PFX_PASSWORD to enable it; without them the release is
       # simply unsigned and SmartScreen warns on first run. See README, "Code signing".
       - name: Sign
-        if: ${{ secrets.SIGNING_PFX_BASE64 != '' }}
+        if: ${{ env.SIGNING_PFX_BASE64 != '' }}
         shell: pwsh
-        env:
-          PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
-          PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
         run: |
           $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
           try {
-            $password = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
+            $password = ConvertTo-SecureString $env:SIGNING_PFX_PASSWORD -AsPlainText -Force
             $cert = Get-PfxCertificate -FilePath $pfx -Password $password
             Set-AuthenticodeSignature -FilePath artifacts\Bubbles.exe -Certificate $cert -TimestampServer 'http://timestamp.digicert.com' -HashAlgorithm SHA256 | Format-List Status, StatusMessage
             $result = Get-AuthenticodeSignature artifacts\Bubbles.exe
@@ -84,10 +87,8 @@ jobs:
 
       - name: Release notes
         shell: pwsh
-        env:
-          SIGNED: ${{ secrets.SIGNING_PFX_BASE64 != '' }}
         run: |
-          $signed = if ($env:SIGNED -eq 'true') { 'yes' } else { 'no -- see the README section on code signing' }
+          $signed = if ($env:SIGNING_PFX_BASE64) { 'yes' } else { 'no -- see the README section on code signing' }
           $fence = [string][char]96 * 3
           $lines = @(
             '**Download `Bubbles.exe` and run it.** No installer and no runtime to fetch: this',
