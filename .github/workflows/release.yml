@@ -26,51 +26,43 @@ jobs:
       - name: Work out the version
         id: version
         shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          $version = if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
-            '${{ github.event.inputs.version }}'
-          } else {
-            '${{ github.ref_name }}'.TrimStart('v')
-          }
+          $version = if ($env:INPUT_VERSION) { $env:INPUT_VERSION } else { $env:REF_NAME -replace '^v', '' }
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Building $version"
 
       - name: Publish
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $v = '${{ steps.version.outputs.version }}'
-
           # The published release is self-contained so it runs on a machine with no .NET
           # installed. Building from source gives the lighter framework-dependent binary.
-          dotnet publish -c Release -p:Version=$v -p:SelfContained=true -p:PublishDir=out\ --nologo
+          dotnet publish -c Release -p:Version=$env:VERSION -p:SelfContained=true -p:PublishDir=out\ --nologo
           if ($LASTEXITCODE -ne 0) { throw 'publish failed' }
 
           New-Item -ItemType Directory -Force artifacts | Out-Null
           Copy-Item out\Bubbles.exe artifacts\Bubbles.exe
 
-      # ---- signing -----------------------------------------------------------------------
-      # Runs only when a certificate is configured. Add repository secrets SIGNING_PFX_BASE64
-      # and SIGNING_PFX_PASSWORD to enable it; without them the release is simply unsigned and
-      # Windows SmartScreen will warn on first run. See README, "Code signing".
+      # Runs only when a certificate is configured. Add repository secrets
+      # SIGNING_PFX_BASE64 and SIGNING_PFX_PASSWORD to enable it; without them the release is
+      # simply unsigned and SmartScreen warns on first run. See README, "Code signing".
       - name: Sign
-        if: ${{ env.SIGNING_PFX_BASE64 != '' }}
-        env:
-          SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
-          SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        if: ${{ secrets.SIGNING_PFX_BASE64 != '' }}
         shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
         run: |
           $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
           try {
-            $password = ConvertTo-SecureString $env:SIGNING_PFX_PASSWORD -AsPlainText -Force
+            $password = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
             $cert = Get-PfxCertificate -FilePath $pfx -Password $password
-
-            Set-AuthenticodeSignature `
-              -FilePath artifacts\Bubbles.exe `
-              -Certificate $cert `
-              -TimestampServer 'http://timestamp.digicert.com' `
-              -HashAlgorithm SHA256 | Format-List Status, StatusMessage
-
+            Set-AuthenticodeSignature -FilePath artifacts\Bubbles.exe -Certificate $cert -TimestampServer 'http://timestamp.digicert.com' -HashAlgorithm SHA256 | Format-List Status, StatusMessage
             $result = Get-AuthenticodeSignature artifacts\Bubbles.exe
             if ($result.Status -ne 'Valid') { throw "signing produced status $($result.Status)" }
           }
@@ -81,8 +73,7 @@ jobs:
       - name: Checksums
         shell: pwsh
         run: |
-          # The updater verifies downloads against this file, so it is published alongside
-          # the binary and must be generated after signing.
+          # The updater verifies downloads against this file, so it is generated after signing.
           Push-Location artifacts
           Get-ChildItem -File | ForEach-Object {
             $hash = (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower()
@@ -93,37 +84,38 @@ jobs:
 
       - name: Release notes
         shell: pwsh
-        run: |
-          $signed = if (Test-Path env:SIGNING_PFX_BASE64) { 'yes' } else { 'no -- see README' }
-          @"
-**Download ``Bubbles.exe`` and run it.** No installer, no runtime to fetch: this build is
-self-contained. It has no window -- look for the artifact in the notification area, and
-right-click it for everything.
-
-Code signed: $signed
-
-Verify the download if you like:
-
-``````
-Get-FileHash Bubbles.exe -Algorithm SHA256
-``````
-
-and compare against ``SHA256SUMS.txt``.
-
-The app checks this page for newer releases and stages them automatically; it never restarts
-itself while you are working. Turn that off with ``"AutoUpdate": false`` in
-``%APPDATA%\Bubbles\settings.json``.
-"@ | Set-Content notes.md -Encoding utf8
         env:
-          SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          SIGNED: ${{ secrets.SIGNING_PFX_BASE64 != '' }}
+        run: |
+          $signed = if ($env:SIGNED -eq 'true') { 'yes' } else { 'no -- see the README section on code signing' }
+          $fence = [string][char]96 * 3
+          $lines = @(
+            '**Download `Bubbles.exe` and run it.** No installer and no runtime to fetch: this',
+            'build is self-contained. It has no window -- look for the artifact in the',
+            'notification area, and right-click it for everything.',
+            '',
+            "Code signed: $signed",
+            '',
+            'Verify the download if you like:',
+            '',
+            $fence + 'powershell',
+            'Get-FileHash Bubbles.exe -Algorithm SHA256',
+            $fence,
+            '',
+            'and compare against `SHA256SUMS.txt`.',
+            '',
+            'The app checks this page for newer releases and stages them automatically. It never',
+            'restarts itself while you are working -- the swap happens at the next launch, or when',
+            'you ask for it from the tray. Turn it off with `"AutoUpdate": false` in',
+            '`%APPDATA%\Bubbles\settings.json`.'
+          )
+          $lines | Set-Content notes.md -Encoding utf8
+          Get-Content notes.md
 
       - name: Publish the release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $v = '${{ steps.version.outputs.version }}'
-          gh release create "v$v" `
-            artifacts\Bubbles.exe artifacts\SHA256SUMS.txt `
-            --title "v$v" `
-            --notes-file notes.md
+          gh release create "v$env:VERSION" artifacts\Bubbles.exe artifacts\SHA256SUMS.txt --title "v$env:VERSION" --notes-file notes.md
