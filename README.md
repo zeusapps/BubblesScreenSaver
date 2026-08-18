@@ -134,6 +134,13 @@ and logged rather than installed.
 
 Turn it off with `"AutoUpdate": false`, or slow it down with `"UpdateCheckHours"`.
 
+**Builds from source do not self-update.** A source build is framework-dependent and keeps
+`Bubbles.dll`, `deps.json` and `runtimeconfig.json` beside the launcher; dropping a
+self-contained release binary into that folder leaves the sidecars behind and the new binary
+dies at startup. Such a build reports that a newer version exists and tells you to `git pull`.
+
+`Bubbles.exe --check-update` runs a single check and reports, without starting the overlay.
+
 ## Build
 
 ```
