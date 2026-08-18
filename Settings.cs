@@ -63,6 +63,15 @@ public sealed class Settings
     /// <summary>Run the bubbles all the time instead of waiting for you to go idle.</summary>
     public bool AlwaysOn { get; set; } = false;
 
+    // ---- updates ----------------------------------------------------------------------
+
+    /// <summary>Check GitHub for newer releases and download them in the background. The swap
+    /// itself happens at the next launch, never while you are using the machine.</summary>
+    public bool AutoUpdate { get; set; } = true;
+
+    /// <summary>Hours between checks.</summary>
+    public double UpdateCheckHours { get; set; } = 24;
+
     // ---- theme ----------------------------------------------------------------------
 
     /// <summary>Zone = S.T.A.L.K.E.R. artifacts. Soap = the original soap bubbles.</summary>
@@ -145,6 +154,7 @@ public sealed class Settings
         BlackoutSeconds = BlackoutSeconds <= 0 ? 0 : Math.Clamp(BlackoutSeconds, IdleSeconds, 86400);
         Dim = Math.Clamp(Dim, 0, 1);
         CollectRadius = Math.Clamp(CollectRadius, 0, 600);
+        UpdateCheckHours = Math.Clamp(UpdateCheckHours, 1, 720);
         FadeInSeconds = Math.Clamp(FadeInSeconds, 0, 30);
         return this;
     }

@@ -9,19 +9,27 @@ public sealed class TrayIcon : IDisposable
     private readonly NotifyIcon _icon;
     private readonly OverlayWindow _overlay;
     private readonly IdleController _idle;
+    private readonly Updater _updater;
     private readonly Action _exit;
+    private readonly ToolStripMenuItem _update;
     private readonly ToolStripMenuItem _pause;
     private readonly ToolStripMenuItem _alwaysOn;
     private readonly ToolStripMenuItem _startup;
     private readonly List<(ToolStripMenuItem Item, Func<Settings, bool> IsCurrent)> _checks = new();
     private Settings _settings;
 
-    public TrayIcon(Settings settings, OverlayWindow overlay, IdleController idle, Action exit)
+    public TrayIcon(Settings settings, OverlayWindow overlay, IdleController idle, Updater updater, Action exit)
     {
         _settings = settings;
         _overlay = overlay;
         _idle = idle;
+        _updater = updater;
         _exit = exit;
+
+        _update = new ToolStripMenuItem("Check for updates", null, async (_, _) => await CheckForUpdates())
+        {
+            Visible = true,
+        };
 
         _pause = new ToolStripMenuItem("Pause", null, (_, _) => TogglePause()) { CheckOnClick = true };
         _alwaysOn = new ToolStripMenuItem("Always on (ignore idle timer)", null,
@@ -30,7 +38,7 @@ public sealed class TrayIcon : IDisposable
             (_, _) => Startup.Set(!Startup.IsEnabled));
 
         var menu = new ContextMenuStrip { ShowImageMargin = false };
-        menu.Items.Add(new ToolStripMenuItem("Bubbles") { Enabled = false });
+        menu.Items.Add(new ToolStripMenuItem($"Bubbles v{Updater.Current.ToString(3)}") { Enabled = false });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Item("Start bubbles now", () => _idle.StartNow()));
         menu.Items.Add(Item("Emission / black screen now", () => _idle.BlackoutNow()));
@@ -81,6 +89,7 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Item("Exit", () => _exit()));
         menu.Opening += (_, _) => RefreshChecks();
+        _updater.StateChanged += RefreshUpdateItem;
 
         _icon = new NotifyIcon
         {
@@ -97,6 +106,37 @@ public sealed class TrayIcon : IDisposable
             IdleController.Stage.Blackout => "Bubbles \u2014 black screen",
             _ => "Bubbles",
         };
+    }
+
+    private void RefreshUpdateItem()
+    {
+        _update.Text = _updater.Staged is { } staged
+            ? $"Install v{staged.ToString(3)} and restart"
+            : "Check for updates";
+    }
+
+    private async Task CheckForUpdates()
+    {
+        // A staged update means the click is an instruction to take it now.
+        if (_updater.Staged is not null)
+        {
+            if (_updater.SwapIn()) _exit();
+            else Notify("Update could not be applied", "Bubbles cannot write to its own folder.");
+            return;
+        }
+
+        _update.Text = "Checking\u2026";
+        var outcome = await _updater.CheckAsync(manual: true);
+        RefreshUpdateItem();
+
+        if (outcome is not null) Notify("Bubbles", outcome);
+    }
+
+    private void Notify(string title, string message)
+    {
+        _icon.BalloonTipTitle = title;
+        _icon.BalloonTipText = message;
+        _icon.ShowBalloonTip(4000);
     }
 
     private static bool Near(double a, double b) => Math.Abs(a - b) < 0.02;
@@ -133,6 +173,7 @@ public sealed class TrayIcon : IDisposable
             item.Checked = isCurrent(_settings);
         _alwaysOn.Checked = _settings.AlwaysOn;
         _startup.Checked = Startup.IsEnabled;
+        RefreshUpdateItem();
     }
 
     private void TogglePause()
@@ -146,6 +187,7 @@ public sealed class TrayIcon : IDisposable
         _settings.Clamped();
         _overlay.Apply(_settings);
         _idle.Apply(_settings);
+        _updater.Apply(_settings);
     }
 
     private void EditSettings()

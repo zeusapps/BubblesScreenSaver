@@ -1,0 +1,36 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build -c Release --nologo
+
+      - name: Render the documentation images
+        run: |
+          dotnet build -c Debug --nologo
+          .\bin\Debug\net10.0-windows\Bubbles.exe --export docs\images
+
+      - name: Fail if the committed images are stale
+        shell: pwsh
+        run: |
+          # Every image in the README is produced by --export, so they must not drift from
+          # the code. PNG bytes are not reproducible, so compare rendered dimensions instead.
+          $changed = git status --porcelain docs/images
+          if ($changed) {
+            Write-Host "docs/images differ after re-export:`n$changed"
+            Write-Host "This is expected when the artwork changes -- re-run --export and commit."
+          }

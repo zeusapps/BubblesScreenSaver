@@ -1,5 +1,8 @@
 # Bubbles
 
+[![build](https://github.com/zeusapps/BubblesScreenSaver/actions/workflows/ci.yml/badge.svg)](https://github.com/zeusapps/BubblesScreenSaver/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/zeusapps/BubblesScreenSaver?sort=semver)](https://github.com/zeusapps/BubblesScreenSaver/releases/latest)
+
 A transparent, click-through screensaver replacement for Windows that doesn't blank your
 desktop — and that still runs when Windows' own screensaver can't.
 
@@ -102,6 +105,35 @@ which on an OLED panel means genuinely unlit pixels.
 
 ---
 
+## Install
+
+Download **`Bubbles.exe`** from the [latest release](https://github.com/zeusapps/BubblesScreenSaver/releases/latest)
+and run it. No installer and no runtime to fetch — the released build is self-contained.
+
+It has no window; look for the artifact in the notification area. Right-click it for
+everything, including **Start with Windows**.
+
+Windows will warn you on first run, because the binary is not signed by a certificate
+authority — see [Code signing](#code-signing). To satisfy yourself the download is intact:
+
+```powershell
+Get-FileHash Bubbles.exe -Algorithm SHA256
+```
+
+and compare with `SHA256SUMS.txt` from the same release.
+
+## Updating
+
+The app checks its own releases page once a day, downloads anything newer in the background,
+and **verifies it against the SHA-256 published with the release** before keeping it. The
+binary is then *staged*, not swapped: the exchange happens at the next launch, or immediately
+if you pick *Install v… and restart* from the tray.
+
+Nothing restarts itself while you are working. Downloads that fail verification are discarded
+and logged rather than installed.
+
+Turn it off with `"AutoUpdate": false`, or slow it down with `"UpdateCheckHours"`.
+
 ## Build
 
 ```
@@ -113,12 +145,6 @@ dotnet publish -c Release -p:SelfContained=true   # portable, but ~75 MB more RA
 Framework-dependent is the default on purpose: this runs all day, and a compressed
 self-contained bundle has to inflate itself into the process — measured at 226 MB resident
 versus 151 MB.
-
-## Use
-
-Run `Bubbles.exe`. It has no window — look for the artifact in the notification area.
-Right-click it for everything: start now, Emission now, theme, timings, dimming, artifact
-count/size/speed, and **Start with Windows**.
 
 ## Settings
 
@@ -146,6 +172,8 @@ count/size/speed, and **Start with Windows**.
 | `CollectRadius` | 60 | how close an artifact must drift to be collected; `0` disables |
 | `ShowDetector` | true | the hunting VELES detector (Zone theme only) |
 | `Emission` | true | Emission instead of a plain fade to black (Zone theme only) |
+| `AutoUpdate` | true | check for, download and stage new releases |
+| `UpdateCheckHours` | 24 | hours between update checks |
 
 ## OLED note
 
@@ -232,6 +260,36 @@ capture only the top-left corner of the desktop and every coordinate is off by t
 That mismatch cost hours of chasing a rendering bug that did not exist.
 
 ---
+
+## Code signing
+
+Released binaries are **not currently signed**, so SmartScreen shows a "Windows protected your
+PC" prompt on first run. That is expected for an unsigned open-source binary, and no amount of
+self-signing fixes it — Windows trusts a signature only when it chains to a certificate
+authority already in its trusted root store.
+
+The release workflow is ready for a real certificate. Add two repository secrets and every
+subsequent release is signed and timestamped automatically:
+
+| Secret | Value |
+|---|---|
+| `SIGNING_PFX_BASE64` | the `.pfx`, base64-encoded |
+| `SIGNING_PFX_PASSWORD` | its password |
+
+Ways to get a certificate that Windows actually trusts:
+
+- **[SignPath Foundation](https://signpath.org/)** — free code signing for open-source
+  projects, which this qualifies as. Usually the right answer here.
+- **Azure Trusted Signing** — a few dollars a month, but requires a verified organisation or
+  three years of individual history.
+- **A certificate authority directly** (Certum, DigiCert, Sectigo) — roughly $100–400 a year;
+  since 2023 the key must live on hardware or in an approved HSM.
+
+An OV certificate does not switch SmartScreen off immediately either; reputation accrues as
+copies are downloaded. An EV certificate does.
+
+`tools/New-SelfSignedCert.ps1` produces a self-signed certificate and prints the two secrets,
+which is useful for exercising the pipeline. It will not stop the warning for anyone else.
 
 ## Disclaimer
 

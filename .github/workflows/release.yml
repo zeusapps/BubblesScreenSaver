@@ -1,0 +1,129 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the leading v (e.g. 1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        run: |
+          $version = if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            '${{ github.event.inputs.version }}'
+          } else {
+            '${{ github.ref_name }}'.TrimStart('v')
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Building $version"
+
+      - name: Publish
+        shell: pwsh
+        run: |
+          $v = '${{ steps.version.outputs.version }}'
+
+          # The published release is self-contained so it runs on a machine with no .NET
+          # installed. Building from source gives the lighter framework-dependent binary.
+          dotnet publish -c Release -p:Version=$v -p:SelfContained=true -p:PublishDir=out\ --nologo
+          if ($LASTEXITCODE -ne 0) { throw 'publish failed' }
+
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item out\Bubbles.exe artifacts\Bubbles.exe
+
+      # ---- signing -----------------------------------------------------------------------
+      # Runs only when a certificate is configured. Add repository secrets SIGNING_PFX_BASE64
+      # and SIGNING_PFX_PASSWORD to enable it; without them the release is simply unsigned and
+      # Windows SmartScreen will warn on first run. See README, "Code signing".
+      - name: Sign
+        if: ${{ env.SIGNING_PFX_BASE64 != '' }}
+        env:
+          SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
+          try {
+            $password = ConvertTo-SecureString $env:SIGNING_PFX_PASSWORD -AsPlainText -Force
+            $cert = Get-PfxCertificate -FilePath $pfx -Password $password
+
+            Set-AuthenticodeSignature `
+              -FilePath artifacts\Bubbles.exe `
+              -Certificate $cert `
+              -TimestampServer 'http://timestamp.digicert.com' `
+              -HashAlgorithm SHA256 | Format-List Status, StatusMessage
+
+            $result = Get-AuthenticodeSignature artifacts\Bubbles.exe
+            if ($result.Status -ne 'Valid') { throw "signing produced status $($result.Status)" }
+          }
+          finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          # The updater verifies downloads against this file, so it is published alongside
+          # the binary and must be generated after signing.
+          Push-Location artifacts
+          Get-ChildItem -File | ForEach-Object {
+            $hash = (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Set-Content SHA256SUMS.txt -Encoding ascii
+          Get-Content SHA256SUMS.txt
+          Pop-Location
+
+      - name: Release notes
+        shell: pwsh
+        run: |
+          $signed = if (Test-Path env:SIGNING_PFX_BASE64) { 'yes' } else { 'no -- see README' }
+          @"
+**Download ``Bubbles.exe`` and run it.** No installer, no runtime to fetch: this build is
+self-contained. It has no window -- look for the artifact in the notification area, and
+right-click it for everything.
+
+Code signed: $signed
+
+Verify the download if you like:
+
+``````
+Get-FileHash Bubbles.exe -Algorithm SHA256
+``````
+
+and compare against ``SHA256SUMS.txt``.
+
+The app checks this page for newer releases and stages them automatically; it never restarts
+itself while you are working. Turn that off with ``"AutoUpdate": false`` in
+``%APPDATA%\Bubbles\settings.json``.
+"@ | Set-Content notes.md -Encoding utf8
+        env:
+          SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = '${{ steps.version.outputs.version }}'
+          gh release create "v$v" `
+            artifacts\Bubbles.exe artifacts\SHA256SUMS.txt `
+            --title "v$v" `
+            --notes-file notes.md

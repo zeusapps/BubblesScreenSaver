@@ -13,10 +13,17 @@ internal static class Program
             return;
         }
 
-        // One overlay is plenty; a second launch just quietly bows out.
-        using var singleInstance = new Mutex(initiallyOwned: true, "Bubbles.Overlay.SingleInstance", out var isFirst);
-        if (!isFirst) return;
+        Updater.SweepOldBinaries();
 
-        new App().Run();
+        // The mutex is scoped tightly: a relaunch after an update must happen once it has been
+        // released, or the new process finds the old one still holding it and exits.
+        using (var singleInstance = new Mutex(initiallyOwned: true, "Bubbles.Overlay.SingleInstance", out var isFirst))
+        {
+            if (!isFirst) return;
+
+            new App().Run();
+        }
+
+        Updater.RelaunchIfSwapped();
     }
 }
