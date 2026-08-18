@@ -1,0 +1,169 @@
+using System.Diagnostics;
+using System.Windows.Forms;
+
+namespace Bubbles;
+
+/// <summary>The only thing you can actually click, since the overlay itself is transparent to the mouse.</summary>
+public sealed class TrayIcon : IDisposable
+{
+    private readonly NotifyIcon _icon;
+    private readonly OverlayWindow _overlay;
+    private readonly IdleController _idle;
+    private readonly Action _exit;
+    private readonly ToolStripMenuItem _pause;
+    private readonly ToolStripMenuItem _alwaysOn;
+    private readonly ToolStripMenuItem _startup;
+    private readonly List<(ToolStripMenuItem Item, Func<Settings, bool> IsCurrent)> _checks = new();
+    private Settings _settings;
+
+    public TrayIcon(Settings settings, OverlayWindow overlay, IdleController idle, Action exit)
+    {
+        _settings = settings;
+        _overlay = overlay;
+        _idle = idle;
+        _exit = exit;
+
+        _pause = new ToolStripMenuItem("Pause", null, (_, _) => TogglePause()) { CheckOnClick = true };
+        _alwaysOn = new ToolStripMenuItem("Always on (ignore idle timer)", null,
+            (_, _) => Tweak(s => s.AlwaysOn = !s.AlwaysOn));
+        _startup = new ToolStripMenuItem("Start with Windows", null,
+            (_, _) => Startup.Set(!Startup.IsEnabled));
+
+        var menu = new ContextMenuStrip { ShowImageMargin = false };
+        menu.Items.Add(new ToolStripMenuItem("Bubbles") { Enabled = false });
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(Item("Start bubbles now", () => _idle.StartNow()));
+        menu.Items.Add(Item("Emission / black screen now", () => _idle.BlackoutNow()));
+        menu.Items.Add(_pause);
+        menu.Items.Add(_alwaysOn);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(Submenu("Start after",
+            Choice("30 seconds", s => s.IdleSeconds = 30, s => s.IdleSeconds == 30),
+            Choice("1 minute",   s => s.IdleSeconds = 60, s => s.IdleSeconds == 60),
+            Choice("2 minutes",  s => s.IdleSeconds = 120, s => s.IdleSeconds == 120),
+            Choice("5 minutes",  s => s.IdleSeconds = 300, s => s.IdleSeconds == 300),
+            Choice("10 minutes", s => s.IdleSeconds = 600, s => s.IdleSeconds == 600)));
+        menu.Items.Add(Submenu("Black screen after",
+            Choice("Never",      s => s.BlackoutSeconds = 0, s => s.BlackoutSeconds == 0),
+            Choice("2 minutes",  s => s.BlackoutSeconds = 120, s => s.BlackoutSeconds == 120),
+            Choice("5 minutes",  s => s.BlackoutSeconds = 300, s => s.BlackoutSeconds == 300),
+            Choice("10 minutes", s => s.BlackoutSeconds = 600, s => s.BlackoutSeconds == 600),
+            Choice("30 minutes", s => s.BlackoutSeconds = 1800, s => s.BlackoutSeconds == 1800)));
+        menu.Items.Add(Submenu("Dim the desktop",
+            Choice("Not at all",  s => s.Dim = 0.00, s => Near(s.Dim, 0.00)),
+            Choice("A little",    s => s.Dim = 0.30, s => Near(s.Dim, 0.30)),
+            Choice("Half",        s => s.Dim = 0.55, s => Near(s.Dim, 0.55)),
+            Choice("A lot",       s => s.Dim = 0.80, s => Near(s.Dim, 0.80)),
+            Choice("Almost black", s => s.Dim = 0.95, s => Near(s.Dim, 0.95))));
+        menu.Items.Add(Submenu("Theme",
+            Choice("The Zone — S.T.A.L.K.E.R. artifacts", s => s.Theme = OverlayTheme.Zone,
+                   s => s.Theme == OverlayTheme.Zone),
+            Choice("Soap bubbles — the original", s => s.Theme = OverlayTheme.Soap,
+                   s => s.Theme == OverlayTheme.Soap),
+            new ToolStripSeparator(),
+            Toggle("Veles artifact detector", s => s.ShowDetector, (s, v) => s.ShowDetector = v),
+            Toggle("Animate artifacts (costs CPU)", s => s.Animated, (s, v) => s.Animated = v),
+            Toggle("Emission blackout", s => s.Emission, (s, v) => s.Emission = v),
+            Toggle("Hide pointer when idle", s => s.HideCursor, (s, v) => s.HideCursor = v)));
+        menu.Items.Add(Submenu("Look",
+            Item("More bubbles",  () => Tweak(s => s.BubbleCount += 4)),
+            Item("Fewer bubbles", () => Tweak(s => s.BubbleCount -= 4)),
+            Item("Bigger",        () => Tweak(s => { s.MinRadius *= 1.2; s.MaxRadius *= 1.2; })),
+            Item("Smaller",       () => Tweak(s => { s.MinRadius /= 1.2; s.MaxRadius /= 1.2; })),
+            Item("Faster",        () => Tweak(s => s.Speed *= 1.4)),
+            Item("Slower",        () => Tweak(s => s.Speed /= 1.4)),
+            Item("Brighter",      () => Tweak(s => s.Opacity += 0.1)),
+            Item("Dimmer",        () => Tweak(s => s.Opacity -= 0.1)),
+            Item("Float upward / bounce", () => Tweak(s => s.Buoyancy = s.Buoyancy > 0 ? 0 : 22))));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(Item("Edit settings\u2026", EditSettings));
+        menu.Items.Add(Item("Reload settings", ReloadSettings));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(Item("Exit", () => _exit()));
+        menu.Opening += (_, _) => RefreshChecks();
+
+        _icon = new NotifyIcon
+        {
+            Icon = BubbleArt.CreateTrayIcon(),
+            Text = "Bubbles",
+            Visible = true,
+            ContextMenuStrip = menu,
+        };
+        _icon.DoubleClick += (_, _) => _idle.StartNow();
+
+        _idle.StageChanged += stage => _icon.Text = stage switch
+        {
+            IdleController.Stage.Bubbles => "Bubbles \u2014 running",
+            IdleController.Stage.Blackout => "Bubbles \u2014 black screen",
+            _ => "Bubbles",
+        };
+    }
+
+    private static bool Near(double a, double b) => Math.Abs(a - b) < 0.02;
+
+    private static ToolStripMenuItem Item(string text, Action action) =>
+        new(text, null, (_, _) => action());
+
+    private static ToolStripMenuItem Submenu(string text, params ToolStripItem[] children)
+    {
+        var item = new ToolStripMenuItem(text);
+        item.DropDownItems.AddRange(children);
+        return item;
+    }
+
+    /// <summary>A checkbox entry bound straight to a bool setting.</summary>
+    private ToolStripMenuItem Toggle(string text, Func<Settings, bool> get, Action<Settings, bool> set)
+    {
+        var item = new ToolStripMenuItem(text, null, (_, _) => Tweak(s => set(s, !get(s))));
+        _checks.Add((item, get));
+        return item;
+    }
+
+    /// <summary>A menu entry that sets a value and shows a tick when that value is active.</summary>
+    private ToolStripMenuItem Choice(string text, Action<Settings> set, Func<Settings, bool> isCurrent)
+    {
+        var item = new ToolStripMenuItem(text, null, (_, _) => Tweak(set));
+        _checks.Add((item, isCurrent));
+        return item;
+    }
+
+    private void RefreshChecks()
+    {
+        foreach (var (item, isCurrent) in _checks)
+            item.Checked = isCurrent(_settings);
+        _alwaysOn.Checked = _settings.AlwaysOn;
+        _startup.Checked = Startup.IsEnabled;
+    }
+
+    private void TogglePause()
+    {
+        _overlay.Paused = _pause.Checked;
+    }
+
+    private void Tweak(Action<Settings> change)
+    {
+        change(_settings);
+        _settings.Clamped();
+        _overlay.Apply(_settings);
+        _idle.Apply(_settings);
+    }
+
+    private void EditSettings()
+    {
+        _settings.Save();
+        Process.Start(new ProcessStartInfo(Settings.FilePath) { UseShellExecute = true });
+    }
+
+    private void ReloadSettings()
+    {
+        _settings = Settings.Load();
+        _overlay.Apply(_settings);
+        _idle.Apply(_settings);
+    }
+
+    public void Dispose()
+    {
+        _icon.Visible = false;
+        _icon.Dispose();
+    }
+}
