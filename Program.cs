@@ -13,6 +13,16 @@ internal static class Program
             return;
         }
 
+        // `--check-update` runs one check and reports, without starting the overlay. Handy
+        // for testing the update path, and for anyone who would rather drive it themselves.
+        if (args.Length >= 1 && args[0] == "--check-update")
+        {
+            var settings = Settings.Load();
+            var outcome = new Updater(settings).CheckAsync(manual: true).GetAwaiter().GetResult();
+            Console.WriteLine(outcome ?? "no update available");
+            return;
+        }
+
         Updater.SweepOldBinaries();
 
         // The mutex is scoped tightly: a relaunch after an update must happen once it has been

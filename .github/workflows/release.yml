@@ -47,7 +47,7 @@ jobs:
         run: |
           # The published release is self-contained so it runs on a machine with no .NET
           # installed. Building from source gives the lighter framework-dependent binary.
-          dotnet publish -c Release -p:Version=$env:VERSION -p:SelfContained=true -p:PublishDir=out\ --nologo
+          dotnet publish -c Release -p:Version=$env:VERSION -p:SelfContained=true -p:EnableCompressionInSingleFile=true -p:PublishDir=out\ --nologo
           if ($LASTEXITCODE -ne 0) { throw 'publish failed' }
 
           New-Item -ItemType Directory -Force artifacts | Out-Null

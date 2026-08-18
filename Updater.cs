@@ -21,6 +21,11 @@ public sealed class Updater : IDisposable
     private const string AssetName = "Bubbles.exe";
     private const string ChecksumAsset = "SHA256SUMS.txt";
 
+    // Declared before the client, because building the User-Agent needs it: static field
+    // initialisers run in declaration order, and an empty version makes the header invalid.
+    public static Version Current { get; } =
+        Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 0);
+
     private static readonly HttpClient Http = CreateClient();
 
     private readonly DispatcherTimer _timer;
@@ -29,9 +34,6 @@ public sealed class Updater : IDisposable
 
     /// <summary>Set when a swap has been made and the caller should relaunch after shutdown.</summary>
     public static bool RestartWanted { get; private set; }
-
-    public static Version Current { get; } =
-        Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
 
     /// <summary>Version sitting in the staging directory, if any is newer than what is running.</summary>
     public Version? Staged { get; private set; }
@@ -73,6 +75,28 @@ public sealed class Updater : IDisposable
 
     public void Apply(Settings settings) => _settings = settings;
 
+    /// <summary>Whether this deployment can safely replace itself.
+    ///
+    /// Releases are published as a single self-contained file. A build from source is
+    /// framework-dependent and keeps its assembly, deps.json and runtimeconfig.json beside the
+    /// launcher -- dropping a self-contained binary into that folder leaves those sidecars
+    /// behind, and the new binary dies on startup with a fatal runtime error. So a source build
+    /// reports that an update exists and otherwise leaves well alone.</summary>
+    public static bool CanSelfUpdate
+    {
+        get
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exe)) return false;
+
+            var directory = Path.GetDirectoryName(exe);
+            if (string.IsNullOrEmpty(directory)) return false;
+
+            var sidecar = Path.Combine(directory, Path.GetFileNameWithoutExtension(exe) + ".dll");
+            return !File.Exists(sidecar);
+        }
+    }
+
     public void Start()
     {
         Staged = ReadStagedVersion();
@@ -105,6 +129,12 @@ public sealed class Updater : IDisposable
 
             if (latest <= Current)
                 return manual ? $"up to date (v{Current})" : null;
+
+            if (!CanSelfUpdate)
+            {
+                Diagnostics.Log("update available but this is a source build; not staging");
+                return $"v{latest} is available -- this build runs from source, so update with git";
+            }
 
             if (Staged is not null && Staged >= latest)
                 return manual ? $"v{Staged} already staged -- restart to apply" : null;
@@ -204,7 +234,7 @@ public sealed class Updater : IDisposable
     /// the old one still holding it and quietly exit.</summary>
     public bool SwapIn()
     {
-        if (Staged is null) return false;
+        if (Staged is null || !CanSelfUpdate) return false;
 
         var current = Environment.ProcessPath;
         if (string.IsNullOrEmpty(current)) return false;
