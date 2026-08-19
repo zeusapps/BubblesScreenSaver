@@ -1,3 +1,5 @@
+using System.IO;
+
 using Bubbles.Displays;
 using Bubbles.Session;
 
@@ -5,6 +7,25 @@ namespace Bubbles;
 
 internal static class Program
 {
+    /// <summary>Whether another Bubbles already holds the single-instance lock. Diagnostics
+    /// ask so they can keep their hands off state that belongs to a live instance.</summary>
+    private static bool AnotherInstanceIsRunning()
+    {
+        using var mutex = new Mutex(initiallyOwned: false, "Bubbles.Overlay.SingleInstance");
+
+        try
+        {
+            if (!mutex.WaitOne(0)) return true;
+        }
+        catch (AbandonedMutexException)
+        {
+            // Held by something that died without releasing it; nothing is running now.
+        }
+
+        mutex.ReleaseMutex();
+        return false;
+    }
+
     [STAThread]
     private static void Main(string[] args)
     {
@@ -34,10 +55,30 @@ internal static class Program
             DisplayInfo.Describe().ForEach(Console.WriteLine);
             Console.WriteLine();
 
-            var displays = new MonitorBacklight();
+            // A running instance owns display-state.json, and RecoverFromCrash claims it:
+            // run this while the app is blacked out and the diagnostic restores the monitor to
+            // full brightness and deletes the record the app is relying on, leaving the screen
+            // lit for the rest of the blackout. So when something else is live, this works on
+            // a scratch file and leaves the real bookkeeping alone.
+            var live = AnotherInstanceIsRunning();
+
+            var displays = live
+                ? new MonitorBacklight(Path.Combine(Path.GetTempPath(), "bubbles-dim-test.json"))
+                : new MonitorBacklight();
+
             Console.WriteLine($"DDC/CI capable monitor found: {displays.Available}");
 
-            displays.RecoverFromCrash();
+            if (live)
+            {
+                Console.WriteLine();
+                Console.WriteLine("another Bubbles is running: leaving its saved state alone.");
+                Console.WriteLine("if it is mid-blackout, what you see below is not what it did.");
+                Console.WriteLine();
+            }
+            else
+            {
+                displays.RecoverFromCrash();
+            }
 
             Console.WriteLine("before:");
             displays.Read().ForEach(Console.WriteLine);
