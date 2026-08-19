@@ -65,7 +65,9 @@ internal static class Program
 
             try
             {
-                acquired = singleInstance.WaitOne(TimeSpan.FromSeconds(8));
+                // Generous, because the process this one is replacing may still be shutting
+                // down. Giving up here is how an update ends with nothing running at all.
+                acquired = singleInstance.WaitOne(TimeSpan.FromSeconds(20));
             }
             catch (AbandonedMutexException)
             {
@@ -73,7 +75,13 @@ internal static class Program
                 acquired = true;
             }
 
-            if (!acquired) return;
+            if (!acquired)
+            {
+                // Worth recording: a silent exit here looks exactly like a crash from outside,
+                // and that ambiguity cost real time to unpick.
+                Diagnostics.Log("another instance holds the single-instance lock; exiting");
+                return;
+            }
 
             try
             {
