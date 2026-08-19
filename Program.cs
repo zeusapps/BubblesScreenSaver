@@ -70,6 +70,17 @@ internal static class Program
             return;
         }
 
+        // `--busy` reports whether anything is currently holding the overlay off.
+        if (args.Length >= 1 && args[0] == "--busy")
+        {
+            var settings = Settings.Load();
+            var reason = UserBusy.Reason(settings);
+            Console.WriteLine(reason is null
+                ? "nothing is holding the screensaver off right now"
+                : $"holding off: {reason}");
+            return;
+        }
+
         // `--emission-demo` runs one Emission on demand, for previewing or testing.
         var demo = args.Length >= 1 && args[0] == "--emission-demo";
         App.EmissionDemo = demo;

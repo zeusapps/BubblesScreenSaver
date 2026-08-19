@@ -33,12 +33,44 @@ Three stages, driven purely by how long you've been away from the keyboard:
 | Artifacts | after `IdleSeconds` (default 60s) | they fade in over the live, dimmed desktop |
 | Blackout | after `BlackoutSeconds` (default 10min) | an Emission, ending on solid black |
 
-Any keypress or mouse movement clears it instantly. The mouse pointer is hidden while the
+It also holds off entirely while you are **on a call** — see below. Any keypress or mouse
+movement clears it instantly. The mouse pointer is hidden while the
 overlay is up — a white arrow parked on one pixel is burn-in too — and comes straight back
 on the first movement.
 
 **No power states are ever touched.** Blackout is drawn, not a display-off command. See
 [*A mistake worth not repeating*](#a-mistake-worth-not-repeating).
+
+## Holding off
+
+An idle timer measures input, and a video call produces none: you sit still, listening, and the
+screensaver concludes you have left. So before anything is drawn, the app asks whether you are
+actually busy:
+
+| Signal | Default | What it catches |
+|---|---|---|
+| `PauseWhileMicrophoneInUse` | on | any call, in any app — Teams, Zoom, Meet in a browser, Discord |
+| `PauseWhileCameraInUse` | on | video on, microphone muted |
+| `PauseInFullScreen` | on | an exclusive full-screen game, or Windows presentation mode |
+
+Microphone and camera state comes from the records Windows keeps for the privacy indicator in
+the taskbar: an app currently holding the device has a start time and no stop time. It needs no
+elevation, covers packaged and desktop apps alike, and is what the operating system itself
+trusts.
+
+```
+Bubbles.exe --busy
+```
+
+reports whether anything is holding the screensaver off, and names it.
+
+A note on what is deliberately *not* used: `SHQueryUserNotificationState` returns `QUNS_BUSY`,
+which sounds exactly right and is useless — it is true for any maximised window covering the
+screen, which on a normal desktop is nearly always. Measured returning `Busy` for a plain
+maximised terminal, which would have held the screensaver off permanently. Only exclusive
+full-screen Direct3D and presentation mode are trusted.
+
+Asking for an Emission from the tray still works while held off; if you ask for it, you get it.
 
 ---
 
@@ -173,6 +205,9 @@ versus 151 MB.
 
 | Key | Default | Meaning |
 |---|---|---|
+| `PauseWhileMicrophoneInUse` | true | hold off while any app is using the microphone |
+| `PauseWhileCameraInUse` | true | hold off while any app is using the camera |
+| `PauseInFullScreen` | true | hold off during full-screen Direct3D or presentation mode |
 | `IdleSeconds` | 60 | idle time before the artifacts appear |
 | `BlackoutSeconds` | 600 | idle time before the screen goes black; `0` disables |
 | `Dim` | 0.55 | how dark the sheet behind the artifacts is, 0–1 |

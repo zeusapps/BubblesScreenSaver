@@ -41,6 +41,19 @@ public sealed class Settings
     /// the motion is slow enough that it reads identically and it halves the work.</summary>
     public int MaxFps { get; set; } = 30;
 
+    // ---- holding off ------------------------------------------------------------------
+
+    /// <summary>Stay out of the way while the microphone is in use. Sitting on a call produces
+    /// no keyboard or mouse input, so an idle timer alone concludes you have left.</summary>
+    public bool PauseWhileMicrophoneInUse { get; set; } = true;
+
+    /// <summary>Stay out of the way while the camera is in use.</summary>
+    public bool PauseWhileCameraInUse { get; set; } = true;
+
+    /// <summary>Stay out of the way while a full-screen or presenting application is running --
+    /// a game, a slideshow, or anything that has asked Windows not to be interrupted.</summary>
+    public bool PauseInFullScreen { get; set; } = true;
+
     // ---- idle behaviour -------------------------------------------------------------
 
     /// <summary>Seconds of no keyboard/mouse input before the bubbles fade in.

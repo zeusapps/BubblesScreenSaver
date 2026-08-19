@@ -27,6 +27,7 @@ public sealed class IdleController : IDisposable
     private bool _forceBlackout;
     private uint? _forceBaseline;
     private int _ticks;
+    private string? _heldOffBy;
 
     public Stage Current { get; private set; } = Stage.Active;
 
@@ -77,6 +78,22 @@ public sealed class IdleController : IDisposable
         }
 
         var idle = NativeInput.IdleSeconds();
+
+        // Somebody on a call is not idle, whatever the input timer says. A deliberate request
+        // from the tray still wins -- if you ask for it, you get it.
+        var heldOffBy = _forceBubbles || _forceBlackout ? null : UserBusy.Reason(_settings);
+
+        if (heldOffBy != _heldOffBy)
+        {
+            _heldOffBy = heldOffBy;
+            Diagnostics.Log(heldOffBy is null ? "no longer held off" : $"holding off: {heldOffBy}");
+        }
+
+        if (heldOffBy is not null)
+        {
+            if (Current != Stage.Active) Enter(Stage.Active);
+            return;
+        }
 
         var wantsBlackout = _forceBlackout
                             || (_settings.BlackoutSeconds > 0 && idle >= _settings.BlackoutSeconds);

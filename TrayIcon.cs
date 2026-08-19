@@ -66,6 +66,10 @@ public sealed class TrayIcon : IDisposable
             Choice("Half",        s => s.Dim = 0.55, s => Near(s.Dim, 0.55)),
             Choice("A lot",       s => s.Dim = 0.80, s => Near(s.Dim, 0.80)),
             Choice("Almost black", s => s.Dim = 0.95, s => Near(s.Dim, 0.95))));
+        menu.Items.Add(Submenu("Hold off while",
+            Toggle("The microphone is in use", s => s.PauseWhileMicrophoneInUse, (s, v) => s.PauseWhileMicrophoneInUse = v),
+            Toggle("The camera is in use", s => s.PauseWhileCameraInUse, (s, v) => s.PauseWhileCameraInUse = v),
+            Toggle("A full-screen app is running", s => s.PauseInFullScreen, (s, v) => s.PauseInFullScreen = v)));
         menu.Items.Add(Submenu("Theme",
             Choice("The Zone — S.T.A.L.K.E.R. artifacts", s => s.Theme = OverlayTheme.Zone,
                    s => s.Theme == OverlayTheme.Zone),
