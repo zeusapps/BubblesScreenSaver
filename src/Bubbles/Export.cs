@@ -5,6 +5,9 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
+using Bubbles.Overlay;
+using Bubbles.Zone;
+
 namespace Bubbles;
 
 /// <summary>`Bubbles.exe --export &lt;dir&gt;` renders the artwork to PNGs and exits.

@@ -1,6 +1,6 @@
 using System.Windows;
 
-namespace Bubbles;
+namespace Bubbles.Zone;
 
 public sealed class Bubble
 {
@@ -25,8 +25,7 @@ public sealed class BubbleField
     private readonly Random _rng = new();
     private readonly List<Bubble> _bubbles = new();
     private IReadOnlyList<Rect> _regions = Array.Empty<Rect>();
-    private readonly List<int> _deck = new();
-    private int _deckSkinCount = -1;
+    private readonly ShuffledDeck _skins = new();
     private Settings _settings;
 
     public BubbleField(Settings settings) => _settings = settings;
@@ -89,35 +88,9 @@ public sealed class BubbleField
         return true;
     }
 
-    /// <summary>Deals the next artifact kind from a shuffled deck rather than rolling a die.
-    /// Independent rolls put obvious duplicates on screen constantly -- with sixteen kinds and
-    /// twenty-two artifacts a collision is a certainty -- whereas dealing without replacement
-    /// shows every kind once before any kind repeats.</summary>
-    private int NextSkin()
-    {
-        var count = Math.Max(1, SkinCount);
-
-        if (_deckSkinCount != count)
-        {
-            _deckSkinCount = count;
-            _deck.Clear();
-        }
-
-        if (_deck.Count == 0)
-        {
-            for (var i = 0; i < count; i++) _deck.Add(i);
-
-            for (var i = _deck.Count - 1; i > 0; i--)
-            {
-                var j = _rng.Next(i + 1);
-                (_deck[i], _deck[j]) = (_deck[j], _deck[i]);
-            }
-        }
-
-        var skin = _deck[^1];
-        _deck.RemoveAt(_deck.Count - 1);
-        return skin;
-    }
+    /// <summary>Deals the next artifact kind. See <see cref="ShuffledDeck"/> for why this is
+    /// not simply a random roll.</summary>
+    private int NextSkin() => _skins.Next(SkinCount);
 
     private Rect RegionOf(Bubble b) =>
         _regions.Count == 0

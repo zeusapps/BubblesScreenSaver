@@ -190,14 +190,62 @@ dies at startup. Such a build reports that a newer version exists and tells you 
 ## Build
 
 ```
-dotnet build                       # bin\Debug\net10.0-windows\Bubbles.exe
-dotnet publish -c Release          # dist\Bubbles.exe (~200 KB, uses the installed .NET 10 runtime)
-dotnet publish -c Release -p:SelfContained=true   # portable, but ~75 MB more RAM at runtime
+dotnet build                                      # src\Bubbles\bin\Debug\net10.0-windows\Bubbles.exe
+dotnet test                                       # the suite below
+dotnet publish src\Bubbles -c Release            # dist\Bubbles.exe (~200 KB, uses the installed .NET 10 runtime)
+dotnet publish src\Bubbles -c Release -p:SelfContained=true   # portable, but ~75 MB more RAM at runtime
 ```
 
 Framework-dependent is the default on purpose: this runs all day, and a compressed
 self-contained bundle has to inflate itself into the process — measured at 226 MB resident
 versus 151 MB.
+
+## Layout
+
+```
+src/Bubbles/
+  Program.cs App.cs        entry point and lifetime
+  Settings.cs              the knobs, read from %APPDATA%\Bubbles\settings.json
+  Zone/                    the artwork: artifacts, their silhouettes, the VELES, lightning
+  Overlay/                 the transparent click-through window the artwork lives in
+  Displays/                blackout: HDR, DDC/CI backlight, and what is owed back to each
+  Session/                 idle detection, tray, updater, "are you on a call"
+  Interop/                 the Win32 declarations
+tests/Bubbles.Tests/
+```
+
+Layered downwards: `Zone` knows nothing about the window it is drawn in, `Overlay` knows
+nothing about the idle timer that shows it, and `Displays` and `Interop` know nothing about
+any of it.
+
+## Tests
+
+```
+dotnet test
+```
+
+Most of this app is pixels and P/Invoke and is verified by looking at it. The tests cover the
+part that is neither, and that had proved it needed them — the bookkeeping in
+[`PendingRestore`](src/Bubbles/Displays/PendingRestore.cs) that decides what a display is owed
+and when it is safe to forget.
+
+Three separate releases fixed bugs in that logic, all with the same shape: a monitor unplugged
+mid-blackout came back at zero brightness with nothing left to say what it should have been.
+It was welded to the `dxva2.dll` calls, so the only way to provoke it was to pull a cable at
+the right moment. Now it is a class with no hardware in it, and pulling the cable is a
+one-line test:
+
+```csharp
+var settled = owed.Settle(_ => Array.Empty<string>(), "restore");   // nothing was reachable
+
+Assert.Equal(0, settled.Restored);
+Assert.Equal(1, owed.Count);                                        // ...so it is still owed
+```
+
+The rest covers the artifact deck (every kind appears before any repeats), the settings clamps
+that stand between a hand-edited `settings.json` and an overlay you cannot dismiss, and the
+updater's checksum lookup — which decides whether a downloaded executable gets run, and so
+must return *no hash* rather than *some other file's hash*.
 
 ## Settings
 

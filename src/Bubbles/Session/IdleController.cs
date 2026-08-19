@@ -1,6 +1,9 @@
 using System.Windows.Threading;
 
-namespace Bubbles;
+using Bubbles.Interop;
+using Bubbles.Overlay;
+
+namespace Bubbles.Session;
 
 /// <summary>Drives the whole thing off the system idle timer:
 /// working -> bubbles -> black screen, and straight back to working on the first keypress.

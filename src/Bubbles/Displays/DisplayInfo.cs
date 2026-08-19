@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Bubbles;
+namespace Bubbles.Displays;
 
 /// <summary>Reads what Windows knows about each connected display: its real name, how it is
 /// connected, and whether HDR is on.

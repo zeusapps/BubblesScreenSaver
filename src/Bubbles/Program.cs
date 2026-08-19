@@ -1,3 +1,6 @@
+using Bubbles.Displays;
+using Bubbles.Session;
+
 namespace Bubbles;
 
 internal static class Program

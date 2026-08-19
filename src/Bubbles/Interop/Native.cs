@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Bubbles;
+namespace Bubbles.Interop;
 
 /// <summary>Win32 bits needed to make a WPF window an invisible, click-through, always-on-top sheet of glass.</summary>
 internal static class Native

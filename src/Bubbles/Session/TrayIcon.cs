@@ -1,7 +1,10 @@
 using System.Diagnostics;
 using System.Windows.Forms;
 
-namespace Bubbles;
+using Bubbles.Overlay;
+using Bubbles.Zone;
+
+namespace Bubbles.Session;
 
 /// <summary>The only thing you can actually click, since the overlay itself is transparent to the mouse.</summary>
 public sealed class TrayIcon : IDisposable

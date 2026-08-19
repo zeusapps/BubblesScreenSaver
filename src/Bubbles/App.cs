@@ -1,5 +1,9 @@
 using System.Windows;
 
+using Bubbles.Displays;
+using Bubbles.Overlay;
+using Bubbles.Session;
+
 namespace Bubbles;
 
 public sealed class App : Application

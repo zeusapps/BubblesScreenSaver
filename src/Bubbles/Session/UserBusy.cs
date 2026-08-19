@@ -1,7 +1,7 @@
-using System.Runtime.InteropServices;
 using Microsoft.Win32;
+using System.Runtime.InteropServices;
 
-namespace Bubbles;
+namespace Bubbles.Session;
 
 /// <summary>Works out whether somebody is busy despite not touching the keyboard.
 ///

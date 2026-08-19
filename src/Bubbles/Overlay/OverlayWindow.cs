@@ -8,7 +8,10 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 
-namespace Bubbles;
+using Bubbles.Interop;
+using Bubbles.Zone;
+
+namespace Bubbles.Overlay;
 
 /// <summary>A borderless, focus-less, click-through window stretched over the whole virtual
 /// desktop. The bubbles live in it; everything else shows straight through.</summary>

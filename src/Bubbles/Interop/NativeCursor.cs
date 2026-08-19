@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Bubbles;
+namespace Bubbles.Interop;
 
 /// <summary>Hides the mouse pointer while the overlay is up.
 ///

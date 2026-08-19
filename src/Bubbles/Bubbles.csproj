@@ -22,6 +22,12 @@
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The test project reaches a few internals that are not worth making public just to
+         exercise them. See tests/Bubbles.Tests. -->
+    <InternalsVisibleTo Include="Bubbles.Tests" />
+  </ItemGroup>
+
   <!-- `dotnet publish -c Release` drops a single Bubbles.exe in dist\.
        Framework-dependent on purpose: this thing runs 24/7, and bundling the runtime
        costs ~75 MB of resident memory (single-file compression has to inflate the whole

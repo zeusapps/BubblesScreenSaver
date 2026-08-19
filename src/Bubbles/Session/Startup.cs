@@ -1,6 +1,6 @@
 using Microsoft.Win32;
 
-namespace Bubbles;
+namespace Bubbles.Session;
 
 /// <summary>Registers the app in the per-user Run key, so it comes back after a reboot.</summary>
 internal static class Startup

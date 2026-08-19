@@ -3,7 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
-namespace Bubbles;
+namespace Bubbles.Zone;
 
 /// <summary>One artifact: a static halo bitmap with a live-drawn body on top.
 ///

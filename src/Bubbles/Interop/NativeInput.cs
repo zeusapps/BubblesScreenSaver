@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Bubbles;
+namespace Bubbles.Interop;
 
 /// <summary>Reading the system idle timer. Nothing in this app touches display or system
 /// power any more -- see the note below.</summary>

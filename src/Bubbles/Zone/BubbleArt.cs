@@ -3,7 +3,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
-namespace Bubbles;
+namespace Bubbles.Zone;
 
 /// <summary>Pre-renders a handful of soap-bubble sprites once, at startup.
 /// Everything after that is just GPU-side transforms of these bitmaps, which is why

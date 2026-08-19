@@ -1,7 +1,7 @@
 using System.Windows;
 using System.Windows.Media;
 
-namespace Bubbles;
+namespace Bubbles.Zone;
 
 /// <summary>Lightning across the sky during an Emission.
 ///

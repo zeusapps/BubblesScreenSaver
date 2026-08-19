@@ -6,7 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 
-namespace Bubbles;
+namespace Bubbles.Zone;
 
 /// <summary>The VELES screen. The detector sits still at the centre and the world moves
 /// around it, the way any radar scope works -- so the crosshair never wanders and a blip

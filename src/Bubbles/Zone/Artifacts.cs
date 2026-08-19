@@ -1,6 +1,6 @@
 using System.Windows.Media;
 
-namespace Bubbles;
+namespace Bubbles.Zone;
 
 /// <summary>The four anomaly families the Zone sorts its artifacts into.</summary>
 public enum Anomaly

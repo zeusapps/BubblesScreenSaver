@@ -2,7 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
-namespace Bubbles;
+namespace Bubbles.Displays;
 
 /// <summary>Turns monitor backlights down while the screen is blacked out.
 ///
@@ -22,10 +22,9 @@ namespace Bubbles;
 /// anything changes, so even a session that ends badly restores the monitor on the next run
 /// rather than leaving somebody with a dark screen and no idea why.
 ///
-/// A monitor that is unplugged while dim keeps its entry: the record is only cleared once the
-/// brightness has actually been put back. Clearing it on a restore that found nothing to
-/// restore left a monitor at zero brightness with no memory of what it should have been, and
-/// it came back dark on the next cable plug.</summary>
+/// A monitor that is unplugged while dim keeps its entry until the brightness has actually
+/// been put back. That bookkeeping lives in <see cref="PendingRestore{T}"/>, which spells out
+/// why it is delicate.</summary>
 public sealed class MonitorBacklight
 {
     private const uint PowerModeVcp = 0xD6;
@@ -85,20 +84,28 @@ public sealed class MonitorBacklight
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern bool GetMonitorInfoW(IntPtr monitor, ref MonitorInfoEx info);
 
-    private sealed record Saved(string Device, string Description, uint Brightness);
+/// <summary>Public so the state file can be serialised, and so the bookkeeping can be
+    /// exercised without a monitor attached.</summary>
+    public sealed record Saved(string Device, string Description, uint Brightness);
 
     private static string StateFile => Path.Combine(Settings.Directory, "display-state.json");
 
-    // Values still owed back to a monitor. Survives the monitor going away.
-    private List<Saved> _saved = new();
+    // Brightness still owed back to a monitor. Survives the monitor going away, and the process.
+    private readonly PendingRestore<Saved> _owed;
     private bool _dimmed;
-    private readonly object _gate = new();
 
     /// <summary>True when at least one monitor takes backlight commands.</summary>
     public bool Available { get; private set; }
 
-    public MonitorBacklight()
+    public MonitorBacklight() : this(StateFile)
     {
+    }
+
+    /// <param name="stateFile">Where the record of owed brightness survives a crash.</param>
+    public MonitorBacklight(string stateFile)
+    {
+        _owed = new PendingRestore<Saved>(stateFile, entry => entry.Device, "backlight");
+
         ForEachMonitor((handle, _, _) =>
         {
             uint minimum = 0, current = 0, maximum = 0;
@@ -125,36 +132,8 @@ public sealed class MonitorBacklight
     /// <summary>Puts back anything a previous run left dimmed. Call once at startup.</summary>
     public void RecoverFromCrash()
     {
-        try
-        {
-            if (!File.Exists(StateFile)) return;
-
-            var saved = JsonSerializer.Deserialize<List<Saved>>(File.ReadAllText(StateFile));
-            if (saved is { Count: > 0 })
-            {
-                lock (_gate) _saved = saved;
-                Diagnostics.Log($"restoring {saved.Count} monitor(s) left dimmed by a previous run");
-                RestoreWhatIsAttached("previous run");
-            }
-            else
-            {
-                File.Delete(StateFile);
-            }
-        }
-        catch (Exception ex)
-        {
-            // A file that cannot be read is worse than no file: it would be retried, and fail,
-            // on every launch forever. Nothing can be restored from it, so let it go.
-            Diagnostics.Log($"display recovery failed, discarding the record: {ex.Message}");
-
-            try
-            {
-                if (File.Exists(StateFile)) File.Delete(StateFile);
-            }
-            catch
-            {
-            }
-        }
+        _owed.Load();
+        RestoreWhatIsAttached("previous run");
     }
 
     /// <summary>Takes the backlight to its minimum, remembering where it was.</summary>
@@ -162,9 +141,7 @@ public sealed class MonitorBacklight
     {
         if (_dimmed) return;
 
-        // Anything still owed from an earlier cycle keeps its original value: a monitor that
-        // reconnected at zero must not have zero recorded as the brightness to go back to.
-        var saved = new List<Saved>(_saved);
+        var accepted = new List<Saved>();
 
         ForEachMonitor((handle, device, description) =>
         {
@@ -193,23 +170,23 @@ public sealed class MonitorBacklight
                 return;
             }
 
-            if (!saved.Any(existing => existing.Device == device))
-                saved.Add(new Saved(device, description, current));
+            accepted.Add(new Saved(device, description, current));
 
             if (alsoStandby) SetVCPFeature(handle, (byte)PowerModeVcp, PowerStandby);
         });
 
-        if (saved.Count == 0)
+        if (accepted.Count == 0)
         {
             Diagnostics.Log("no monitor accepted a backlight change");
             return;
         }
 
-        lock (_gate) _saved = saved;
+        // Anything already owed from an earlier cycle keeps its first original: a monitor that
+        // reconnected at zero must not have zero recorded as the brightness to go back to.
+        _owed.Remember(accepted);
         _dimmed = true;
-        Persist(saved);
 
-        Diagnostics.Log($"dimmed {saved.Count} external monitor(s)" + (alsoStandby ? " and asked for standby" : ""));
+        Diagnostics.Log($"dimmed {accepted.Count} external monitor(s)" + (alsoStandby ? " and asked for standby" : ""));
     }
 
     /// <summary>Puts every monitor back where it was found. Anything not currently attached
@@ -222,76 +199,32 @@ public sealed class MonitorBacklight
 
     /// <summary>Retries anything still owed. Called when the displays change, since that is
     /// exactly when a monitor that was unplugged mid-blackout comes back.</summary>
-    public void RestorePending()
+    public void RestorePending() => RestoreWhatIsAttached("reconnect");
+
+    private void RestoreWhatIsAttached(string why) => _owed.Settle(owed =>
     {
-        lock (_gate)
-        {
-            if (_saved.Count == 0) return;
-        }
-
-        RestoreWhatIsAttached("reconnect");
-    }
-
-    private void RestoreWhatIsAttached(string why)
-    {
-        List<Saved> owed;
-        lock (_gate)
-        {
-            if (_saved.Count == 0) return;
-            owed = new List<Saved>(_saved);
-        }
-
         var done = new List<string>();
 
-        ForEachMonitor((handle, device, description) =>
+        ForEachMonitor((handle, device, _) =>
         {
             // Keyed by display device rather than enumeration order, so unplugging one monitor
             // cannot make another get somebody else's brightness back.
-            var saved = owed.FirstOrDefault(s => s.Device == device);
+            var saved = owed.FirstOrDefault(entry => entry.Device == device);
             if (saved is null) return;
 
             // Wake before brightness: a monitor in standby ignores everything else.
             SetVCPFeature(handle, (byte)PowerModeVcp, PowerOn);
             SetMonitorBrightness(handle, saved.Brightness);
 
+            // Believe it only once the monitor reads back what it was given: a DDC/CI channel
+            // that is disabled accepts the write and changes nothing.
             uint minimum = 0, current = 0, maximum = 0;
             if (GetMonitorBrightness(handle, ref minimum, ref current, ref maximum) && current == saved.Brightness)
                 done.Add(device);
         });
 
-        List<Saved> left;
-        lock (_gate)
-        {
-            _saved = _saved.Where(s => !done.Contains(s.Device)).ToList();
-            left = _saved;
-        }
-
-        Persist(left);
-
-        if (done.Count > 0) Diagnostics.Log($"backlight restored on {done.Count} monitor(s) ({why})");
-        if (left.Count > 0)
-            Diagnostics.Log($"still owed to {left.Count} monitor(s) not attached: " +
-                            string.Join(", ", left.Select(s => s.Device)));
-    }
-
-    private static void Persist(List<Saved> entries)
-    {
-        try
-        {
-            if (entries.Count == 0)
-            {
-                if (File.Exists(StateFile)) File.Delete(StateFile);
-                return;
-            }
-
-            Directory.CreateDirectory(Settings.Directory);
-            File.WriteAllText(StateFile, JsonSerializer.Serialize(entries));
-        }
-        catch
-        {
-            // Recovery is a nicety; dimming still works without it.
-        }
-    }
+        return done;
+    }, why);
 
     /// <summary>Opens every physical monitor in turn, and always closes them again. The
     /// callback receives the display device name, which is stable enough to key state on.</summary>
