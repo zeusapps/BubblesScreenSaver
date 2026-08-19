@@ -27,7 +27,7 @@ internal static class Program
         // finds, dims for a couple of seconds, and puts everything back.
         if (args.Length >= 1 && args[0] == "--dim-test")
         {
-            var displays = new ExternalDisplays();
+            var displays = new MonitorBacklight();
             Console.WriteLine($"DDC/CI capable monitor found: {displays.Available}");
 
             displays.RecoverFromCrash();

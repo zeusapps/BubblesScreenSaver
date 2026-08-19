@@ -4,18 +4,24 @@ using System.Text.Json;
 
 namespace Bubbles;
 
-/// <summary>Turns the backlight down on external monitors while the screen is blacked out.
+/// <summary>Turns monitor backlights down while the screen is blacked out.
 ///
-/// Drawing black is enough for an OLED panel, where black pixels are simply unlit. An LCD is
-/// still fully backlit behind that black, so it goes on glowing in a dark room. Most external
-/// monitors expose their backlight over DDC/CI, which is a display-side setting rather than a
-/// power state -- nothing about the machine's power management is touched, and it is put back
-/// exactly as it was.
+/// Drawing black is a complete answer on OLED, where a black pixel is unlit. An LCD is still
+/// backlit behind that black and goes on glowing. The obvious design would be to detect which
+/// is which -- but Windows exposes no reliable way to ask a display what panel technology it
+/// uses, and guessing from model strings or connection type is exactly the sort of assumption
+/// that breaks on somebody else's desk.
 ///
-/// The original brightness is written to disk before anything changes, so a session that ends
-/// badly still restores the monitor on the next run rather than leaving somebody with a dark
-/// screen and no idea why.</summary>
-public sealed class ExternalDisplays
+/// So this asks about capability rather than technology: every monitor is offered a backlight
+/// change, and whichever accept one get it. That is correct for any arrangement -- all OLED,
+/// none, or a mixture -- because black already covers OLED, and lowering an OLED's luminance
+/// does no harm either. Nothing is treated differently for being internal or external.
+///
+/// Brightness over DDC/CI is a display-side setting, not a power state, so nothing about the
+/// machine's power management is touched. The original value is written to disk before
+/// anything changes, so even a session that ends badly restores the monitor on the next run
+/// rather than leaving somebody with a dark screen and no idea why.</summary>
+public sealed class MonitorBacklight
 {
     private const uint PowerModeVcp = 0xD6;
     private const uint PowerOn = 1;
@@ -53,7 +59,28 @@ public sealed class ExternalDisplays
     [DllImport("dxva2.dll", SetLastError = true)]
     private static extern bool SetVCPFeature(IntPtr monitor, byte code, uint value);
 
-    private sealed record Saved(int Index, string Description, uint Brightness);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MonitorInfoEx
+    {
+        public int Size;
+        public Rect Monitor;
+        public Rect Work;
+        public uint Flags;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string DeviceName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool GetMonitorInfoW(IntPtr monitor, ref MonitorInfoEx info);
+
+    private sealed record Saved(string Device, string Description, uint Brightness);
 
     private static string StateFile => Path.Combine(Settings.Directory, "display-state.json");
 
@@ -63,9 +90,13 @@ public sealed class ExternalDisplays
     /// <summary>True when at least one monitor takes backlight commands.</summary>
     public bool Available { get; private set; }
 
-    public ExternalDisplays()
+    public MonitorBacklight()
     {
-        ForEachMonitor((_, _, _) => Available = true);
+        ForEachMonitor((handle, _, _) =>
+        {
+            uint minimum = 0, current = 0, maximum = 0;
+            if (GetMonitorBrightness(handle, ref minimum, ref current, ref maximum)) Available = true;
+        });
     }
 
     /// <summary>Current backlight readings, for diagnostics and the --dim-test flag.</summary>
@@ -73,12 +104,12 @@ public sealed class ExternalDisplays
     {
         var readings = new List<string>();
 
-        ForEachMonitor((handle, index, description) =>
+        ForEachMonitor((handle, device, description) =>
         {
             uint minimum = 0, current = 0, maximum = 0;
             readings.Add(GetMonitorBrightness(handle, ref minimum, ref current, ref maximum)
-                ? $"  [{index}] {description.Trim()}: brightness {current} (of {minimum}..{maximum})"
-                : $"  [{index}] {description.Trim()}: no backlight control");
+                ? $"  {device}  {description.Trim()}: brightness {current} (range {minimum}..{maximum})"
+                : $"  {device}  {description.Trim()}: no backlight control over DDC/CI");
         });
 
         return readings;
@@ -117,7 +148,7 @@ public sealed class ExternalDisplays
 
         var saved = new List<Saved>();
 
-        ForEachMonitor((handle, index, description) =>
+        ForEachMonitor((handle, device, description) =>
         {
             uint minimum = 0, current = 0, maximum = 0;
             if (!GetMonitorBrightness(handle, ref minimum, ref current, ref maximum)) return;
@@ -136,13 +167,13 @@ public sealed class ExternalDisplays
 
             if (!took && current != minimum)
             {
-                Diagnostics.Log($"monitor {index} ignored the backlight request " +
+                Diagnostics.Log($"{device} ignored the backlight request " +
                                 $"(asked {current}->{minimum}, still reads {verifyCurrent}); " +
                                 "DDC/CI is probably disabled or blocked on this link");
                 return;
             }
 
-            saved.Add(new Saved(index, description, current));
+            saved.Add(new Saved(device, description, current));
             if (alsoStandby) SetVCPFeature(handle, (byte)PowerModeVcp, PowerStandby);
         });
 
@@ -174,10 +205,11 @@ public sealed class ExternalDisplays
         if (!_dimmed) return;
         _dimmed = false;
 
-        ForEachMonitor((handle, index, description) =>
+        ForEachMonitor((handle, device, description) =>
         {
-            var saved = _saved.FirstOrDefault(s => s.Index == index && s.Description == description)
-                        ?? _saved.FirstOrDefault(s => s.Index == index);
+            // Keyed by display device rather than enumeration order, so unplugging one monitor
+            // cannot make another get somebody else's brightness back.
+            var saved = _saved.FirstOrDefault(s => s.Device == device);
             if (saved is null) return;
 
             // Wake before brightness: a monitor in standby ignores everything else.
@@ -198,8 +230,9 @@ public sealed class ExternalDisplays
         Diagnostics.Log("external monitors restored");
     }
 
-    /// <summary>Opens every physical monitor in turn, and always closes them again.</summary>
-    private static void ForEachMonitor(Action<IntPtr, int, string> body)
+    /// <summary>Opens every physical monitor in turn, and always closes them again. The
+    /// callback receives the display device name, which is stable enough to key state on.</summary>
+    private static void ForEachMonitor(Action<IntPtr, string, string> body)
     {
         var screens = new List<IntPtr>();
 
@@ -217,10 +250,11 @@ public sealed class ExternalDisplays
             return;
         }
 
-        var index = 0;
-
         foreach (var screen in screens)
         {
+            var info = new MonitorInfoEx { Size = Marshal.SizeOf<MonitorInfoEx>() };
+            var device = GetMonitorInfoW(screen, ref info) ? info.DeviceName : screen.ToString();
+
             uint count = 0;
             if (!GetNumberOfPhysicalMonitorsFromHMONITOR(screen, ref count) || count == 0) continue;
 
@@ -231,18 +265,16 @@ public sealed class ExternalDisplays
             {
                 foreach (var monitor in monitors)
                 {
-                    // An internal laptop panel typically answers nothing here; that is fine,
-                    // it is also the panel that does not need this.
+                    // Plenty of panels answer nothing here -- most internal ones, and any
+                    // monitor whose DDC/CI channel is off. That is expected, not an error.
                     try
                     {
-                        body(monitor.Handle, index, monitor.Description);
+                        body(monitor.Handle, device, monitor.Description);
                     }
                     catch (Exception ex)
                     {
-                        Diagnostics.Log($"monitor {index} command failed: {ex.Message}");
+                        Diagnostics.Log($"{device} command failed: {ex.Message}");
                     }
-
-                    index++;
                 }
             }
             finally

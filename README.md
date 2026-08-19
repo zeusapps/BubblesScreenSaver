@@ -179,8 +179,8 @@ versus 151 MB.
 | `CollectRadius` | 60 | how close an artifact must drift to be collected; `0` disables |
 | `ShowDetector` | true | the hunting VELES detector (Zone theme only) |
 | `Emission` | true | Emission instead of a plain fade to black (Zone theme only) |
-| `DimExternalMonitors` | true | take external backlights to minimum over DDC/CI during blackout |
-| `ExternalMonitorStandby` | false | also ask external monitors to enter standby (darker, slower to wake) |
+| `DimMonitorBacklight` | true | take external backlights to minimum over DDC/CI during blackout |
+| `MonitorStandby` | false | also ask external monitors to enter standby (darker, slower to wake) |
 | `AutoUpdate` | true | check for, download and stage new releases |
 | `UpdateCheckHours` | 24 | hours between update checks |
 
@@ -191,43 +191,59 @@ underneath is still burning in. `Dim` is the lever that matters: on OLED, near-b
 genuinely-off pixels. `Dim: 0.9` keeps the desktop readable-ish while cutting almost all of the
 emission, and `BlackoutSeconds` is the real fix.
 
-## Non-OLED monitors
+## Monitors that are not OLED
 
 Drawing black is a complete answer on OLED, where a black pixel is an unlit pixel. An LCD is
-still fully backlit behind that black and goes on glowing in a dark room.
+still backlit behind that black and goes on glowing in a dark room.
 
-Where a monitor supports **DDC/CI**, the blackout stage takes its backlight to minimum and
-puts it back on wake. This is a display-side setting, not a power state — nothing about the
-machine's power management is touched. The original brightness is written to disk *before*
-anything changes, so even a session that ends badly restores the monitor on the next run.
-`ExternalMonitorStandby: true` additionally asks the monitor to enter standby, which is darker
-still but slower to come back, and is off by default.
+The obvious design would be to detect which panel is which. **Windows exposes no reliable way
+to ask a display what technology it uses** — there is no such field in EDID, no WMI class for
+it, and no public API. Guessing from model strings or from whether a panel is internal is
+exactly the sort of assumption that works on one desk and breaks on the next.
+
+So this asks about *capability* instead. Every monitor is offered a backlight change over
+DDC/CI, and whichever accept one get it. That is correct for any arrangement — all OLED, none,
+or a mixture — because black already covers OLED, and lowering an OLED's luminance does no
+harm either. Nothing is treated differently for being internal or external.
+
+Brightness over DDC/CI is a display-side setting, not a power state, so nothing about the
+machine's power management is touched. The original value is written to disk *before* anything
+changes and keyed by display device, so even a session that ends badly restores the right
+monitor on the next run. `MonitorStandby: true` additionally asks monitors to enter standby,
+which is darker still but slower to come back, and is off by default.
 
 ```
 Bubbles.exe --dim-test
 ```
 
-reports what each monitor supports, dims briefly, and restores. Use it to find out where you
-stand.
+lists every monitor, what it supports, and whether a change actually took.
 
-**Plenty of monitors accept DDC writes and quietly ignore them.** The app reads the value back
-and will tell you so rather than claiming success — a write returning `True` proves nothing.
+### When a monitor ignores it
+
+**Many monitors accept DDC writes and quietly ignore them.** They return success and change
+nothing — a `True` from `SetMonitorBrightness` proves only that the message was sent. This app
+reads the value back and reports the truth rather than claiming a monitor was dimmed while it
+sits at full brightness.
+
 If yours ignores them, in rough order of likelihood:
 
-- it is connected through a **dock, hub or KVM**, which frequently blocks the DDC channel;
-- it is on **HDMI** — DDC is generally more reliable over DisplayPort;
-- **HDR is enabled**, which hands brightness control to the system and locks the monitor's own;
-- a vendor utility (ASUS DisplayWidget Center, and similar) is holding the channel;
-- DDC/CI is switched off in the monitor's OSD.
+- a **dock, hub or KVM** in the path — these frequently block the DDC channel;
+- **HDR is enabled**, which hands brightness to the system and locks the monitor's own control;
+- a **picture preset** (ASUS GameVisual, and equivalents) that locks brightness;
+- a vendor utility holding the channel — ASUS DisplayWidget Center, Armoury Crate, and friends;
+- **DDC/CI switched off** in the monitor's on-screen menu;
+- **HDMI** rather than DisplayPort — DDC is generally more reliable over DP.
 
 A quick independent check: if [Twinkle Tray](https://twinkletray.com/) or Monitorian cannot
-change the brightness either, the problem is the monitor or the link, not this app.
+change the brightness either, the problem is the monitor or the link rather than this app.
 
-**The reliable fallback for any panel is to let Windows sleep the displays.** That switches an
-LCD's backlight off properly, which no software overlay can do. It needs nothing holding
-`ES_DISPLAY_REQUIRED` — so if you run PowerToys Awake, use plain "keep awake" rather than "keep
-screen on". The machine stays up, Windows blanks the panels on its own timer, and this app's
-blackout covers the interval before that happens.
+### The fallback that always works
+
+**Let Windows sleep the displays.** That switches an LCD backlight off properly, which no
+software overlay can do from the outside. It needs nothing holding `ES_DISPLAY_REQUIRED` — so
+if you run PowerToys Awake, use plain "keep awake" rather than "keep screen on". The machine
+stays up, Windows blanks the panels on its own timer, and this app's blackout covers the
+interval before that happens.
 
 ## What the animation costs
 
