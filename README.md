@@ -260,10 +260,17 @@ Measured on a 2560×1600 desktop with 22 artifacts, as a percentage of **one** C
 | Soap bubbles (pre-rendered sprites), no detector | ~9% |
 | Zone, `Animated: false` (same shapes, frozen) + detector | ~31% |
 | Zone, `Animated: true` + detector | ~65–75% |
-| Any theme, once the screen has gone black | ~4% |
+| Any theme, once the screen has gone black | ~1.5% |
 
 Rendering stops once the screen actually reaches black, so the long tail of an idle night
-costs almost nothing. On a many-core machine the top figure is a few percent of total CPU, but
+costs almost nothing — measured at 30% of a core with artifacts on screen and 1.5% once dark,
+with total system CPU roughly halving at that point.
+
+**If your fans spin up shortly after the screen goes dark, it is worth checking what actually
+caused it.** Going idle is also when Windows starts automatic maintenance, indexing and
+antivirus scans, and whatever you left running keeps running. `tools/Watch-IdleCpu.ps1` samples
+per-process CPU over time so you can see what is responsible rather than blaming whatever
+happened to be on screen. On a many-core machine the top figure is a few percent of total CPU, but
 it is real, and it runs while you are away. `Animated: false` keeps every shape and the detector for about a third
 of the cost — tray → *Animate artifacts*. `MaxFps` and `BubbleCount` scale it further.
 
