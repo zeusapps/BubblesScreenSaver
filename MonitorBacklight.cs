@@ -20,7 +20,12 @@ namespace Bubbles;
 /// Brightness over DDC/CI is a display-side setting, not a power state, so nothing about the
 /// machine's power management is touched. The original value is written to disk before
 /// anything changes, so even a session that ends badly restores the monitor on the next run
-/// rather than leaving somebody with a dark screen and no idea why.</summary>
+/// rather than leaving somebody with a dark screen and no idea why.
+///
+/// A monitor that is unplugged while dim keeps its entry: the record is only cleared once the
+/// brightness has actually been put back. Clearing it on a restore that found nothing to
+/// restore left a monitor at zero brightness with no memory of what it should have been, and
+/// it came back dark on the next cable plug.</summary>
 public sealed class MonitorBacklight
 {
     private const uint PowerModeVcp = 0xD6;
@@ -84,8 +89,10 @@ public sealed class MonitorBacklight
 
     private static string StateFile => Path.Combine(Settings.Directory, "display-state.json");
 
+    // Values still owed back to a monitor. Survives the monitor going away.
     private List<Saved> _saved = new();
     private bool _dimmed;
+    private readonly object _gate = new();
 
     /// <summary>True when at least one monitor takes backlight commands.</summary>
     public bool Available { get; private set; }
@@ -125,10 +132,9 @@ public sealed class MonitorBacklight
             var saved = JsonSerializer.Deserialize<List<Saved>>(File.ReadAllText(StateFile));
             if (saved is { Count: > 0 })
             {
-                _saved = saved;
-                _dimmed = true;
+                lock (_gate) _saved = saved;
                 Diagnostics.Log($"restoring {saved.Count} monitor(s) left dimmed by a previous run");
-                Restore();
+                RestoreWhatIsAttached("previous run");
             }
             else
             {
@@ -137,7 +143,17 @@ public sealed class MonitorBacklight
         }
         catch (Exception ex)
         {
-            Diagnostics.Log($"display recovery failed: {ex.Message}");
+            // A file that cannot be read is worse than no file: it would be retried, and fail,
+            // on every launch forever. Nothing can be restored from it, so let it go.
+            Diagnostics.Log($"display recovery failed, discarding the record: {ex.Message}");
+
+            try
+            {
+                if (File.Exists(StateFile)) File.Delete(StateFile);
+            }
+            catch
+            {
+            }
         }
     }
 
@@ -146,7 +162,9 @@ public sealed class MonitorBacklight
     {
         if (_dimmed) return;
 
-        var saved = new List<Saved>();
+        // Anything still owed from an earlier cycle keeps its original value: a monitor that
+        // reconnected at zero must not have zero recorded as the brightness to go back to.
+        var saved = new List<Saved>(_saved);
 
         ForEachMonitor((handle, device, description) =>
         {
@@ -175,7 +193,9 @@ public sealed class MonitorBacklight
                 return;
             }
 
-            saved.Add(new Saved(device, description, current));
+            if (!saved.Any(existing => existing.Device == device))
+                saved.Add(new Saved(device, description, current));
+
             if (alsoStandby) SetVCPFeature(handle, (byte)PowerModeVcp, PowerStandby);
         });
 
@@ -185,51 +205,92 @@ public sealed class MonitorBacklight
             return;
         }
 
-        _saved = saved;
+        lock (_gate) _saved = saved;
         _dimmed = true;
-
-        try
-        {
-            Directory.CreateDirectory(Settings.Directory);
-            File.WriteAllText(StateFile, JsonSerializer.Serialize(saved));
-        }
-        catch
-        {
-            // Recovery is a nicety; dimming still works without it.
-        }
+        Persist(saved);
 
         Diagnostics.Log($"dimmed {saved.Count} external monitor(s)" + (alsoStandby ? " and asked for standby" : ""));
     }
 
-    /// <summary>Puts every monitor back where it was found.</summary>
+    /// <summary>Puts every monitor back where it was found. Anything not currently attached
+    /// keeps its entry and is dealt with when it reappears.</summary>
     public void Restore()
     {
-        if (!_dimmed) return;
         _dimmed = false;
+        RestoreWhatIsAttached("restore");
+    }
+
+    /// <summary>Retries anything still owed. Called when the displays change, since that is
+    /// exactly when a monitor that was unplugged mid-blackout comes back.</summary>
+    public void RestorePending()
+    {
+        lock (_gate)
+        {
+            if (_saved.Count == 0) return;
+        }
+
+        RestoreWhatIsAttached("reconnect");
+    }
+
+    private void RestoreWhatIsAttached(string why)
+    {
+        List<Saved> owed;
+        lock (_gate)
+        {
+            if (_saved.Count == 0) return;
+            owed = new List<Saved>(_saved);
+        }
+
+        var done = new List<string>();
 
         ForEachMonitor((handle, device, description) =>
         {
             // Keyed by display device rather than enumeration order, so unplugging one monitor
             // cannot make another get somebody else's brightness back.
-            var saved = _saved.FirstOrDefault(s => s.Device == device);
+            var saved = owed.FirstOrDefault(s => s.Device == device);
             if (saved is null) return;
 
             // Wake before brightness: a monitor in standby ignores everything else.
             SetVCPFeature(handle, (byte)PowerModeVcp, PowerOn);
             SetMonitorBrightness(handle, saved.Brightness);
+
+            uint minimum = 0, current = 0, maximum = 0;
+            if (GetMonitorBrightness(handle, ref minimum, ref current, ref maximum) && current == saved.Brightness)
+                done.Add(device);
         });
 
-        _saved = new List<Saved>();
+        List<Saved> left;
+        lock (_gate)
+        {
+            _saved = _saved.Where(s => !done.Contains(s.Device)).ToList();
+            left = _saved;
+        }
 
+        Persist(left);
+
+        if (done.Count > 0) Diagnostics.Log($"backlight restored on {done.Count} monitor(s) ({why})");
+        if (left.Count > 0)
+            Diagnostics.Log($"still owed to {left.Count} monitor(s) not attached: " +
+                            string.Join(", ", left.Select(s => s.Device)));
+    }
+
+    private static void Persist(List<Saved> entries)
+    {
         try
         {
-            if (File.Exists(StateFile)) File.Delete(StateFile);
+            if (entries.Count == 0)
+            {
+                if (File.Exists(StateFile)) File.Delete(StateFile);
+                return;
+            }
+
+            Directory.CreateDirectory(Settings.Directory);
+            File.WriteAllText(StateFile, JsonSerializer.Serialize(entries));
         }
         catch
         {
+            // Recovery is a nicety; dimming still works without it.
         }
-
-        Diagnostics.Log("external monitors restored");
     }
 
     /// <summary>Opens every physical monitor in turn, and always closes them again. The

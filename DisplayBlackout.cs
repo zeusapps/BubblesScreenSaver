@@ -28,6 +28,7 @@ public sealed class DisplayBlackout
 
     private readonly MonitorBacklight _backlight = new();
     private readonly DispatcherTimer _afterModeChange;
+    private readonly DispatcherTimer _afterReconnect;
 
     private List<DisplayInfo.Target> _hdrTurnedOff = new();
     private Settings _settings;
@@ -36,6 +37,21 @@ public sealed class DisplayBlackout
     public DisplayBlackout(Settings settings)
     {
         _settings = settings;
+
+        // A monitor unplugged mid-blackout comes back through this event, and it is owed its
+        // brightness. The delay lets the link settle before DDC/CI is asked anything.
+        _afterReconnect = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        _afterReconnect.Tick += (_, _) =>
+        {
+            _afterReconnect.Stop();
+            _backlight.RestorePending();
+        };
+
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (_, _) =>
+        {
+            _afterReconnect.Stop();
+            _afterReconnect.Start();
+        };
 
         // Long enough for the displays to re-sync after HDR is switched off, so DDC/CI is
         // answering by the time the backlight is asked to move.
