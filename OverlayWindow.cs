@@ -298,7 +298,7 @@ public sealed class OverlayWindow : Window
     {
         Animate(_detectorLayer, 0, 0.6);
         Animate(_canvas, 0, 2.5);
-        Animate(_scrim, 1, 2.5).Completed += (_, _) => { if (_blackout) Suspended = true; };
+        Animate(_scrim, 1, 2.5, ReachedBlack);
     }
 
     /// <summary>An Emission. The sky burns, the artifacts go frantic, the wavefront hits,
@@ -311,24 +311,32 @@ public sealed class OverlayWindow : Window
         var pda = DetectorWanted ? 1.0 : 0.0;
 
         // The detector loses the signal shortly before the wave arrives.
-        Keys(_detectorLayer, (pda, 0), (pda, BuildupEnds - 1.6), (0, BuildupEnds - 0.2));
+        Keys(_detectorLayer, null, (pda, 0), (pda, BuildupEnds - 1.6), (0, BuildupEnds - 0.2));
 
         // The world recedes as the sky takes over, then everything is swallowed.
-        Keys(_scrim, (_settings.Dim, 0), (0.86, BuildupEnds), (0.86, WaveEnds), (1, DarknessAt));
-        Keys(_canvas, (_settings.Opacity, 0), (1, BuildupEnds), (1, WaveEnds), (0, DarknessAt));
-        Keys(_emission, (0, 0), (0.94, BuildupEnds), (0.78, WaveEnds), (0, DarknessAt));
+        Keys(_scrim, null, (_settings.Dim, 0), (0.86, BuildupEnds), (0.86, WaveEnds), (1, DarknessAt));
+        Keys(_canvas, null, (_settings.Opacity, 0), (1, BuildupEnds), (1, WaveEnds), (0, DarknessAt));
+        Keys(_emission, null, (0, 0), (0.94, BuildupEnds), (0.78, WaveEnds), (0, DarknessAt));
 
         // The wavefront itself: a hard flare, gone almost as fast as it came.
-        Keys(_flash, (0, 0), (0, BuildupEnds), (0.85, BuildupEnds + 0.3), (0, WaveEnds));
+        Keys(_flash, null, (0, 0), (0, BuildupEnds), (0.85, BuildupEnds + 0.3), (0, WaveEnds));
 
-        Keys(_root, (1, 0), (1, DarknessAt)).Completed += (_, _) =>
-        {
-            if (!_blackout) return;
-            _emitting = false;
-            _field.Agitation = 1;
-            Suspended = true;
-            WentDark?.Invoke();
-        };
+        // A flat timeline on the root, purely to time the end of the Emission.
+        Keys(_root, ReachedBlack, (1, 0), (1, DarknessAt));
+    }
+
+    /// <summary>The screen has actually arrived at black. Rendering stops here -- there is
+    /// nothing left to draw -- and anything that should react to real darkness happens now
+    /// rather than when the blackout merely started.</summary>
+    private void ReachedBlack()
+    {
+        if (!_blackout) return;
+
+        _emitting = false;
+        _emissionTime = 0;
+        _field.Agitation = 1;
+        Suspended = true;
+        WentDark?.Invoke();
     }
 
     private void EndBlackout()
@@ -356,19 +364,29 @@ public sealed class OverlayWindow : Window
         _ => Math.Max(1, 3.8 - 2.8 * (t - WaveEnds) / (DarknessAt - WaveEnds)),
     };
 
-    private static DoubleAnimation Animate(UIElement target, double to, double seconds)
+    /// <summary>Starts an opacity animation.
+    ///
+    /// The completion callback is a parameter rather than something the caller attaches to the
+    /// returned animation, because attaching afterwards silently does nothing: BeginAnimation
+    /// creates the clock from the timeline there and then, and a handler added later is never
+    /// invoked. That mistake cost a blackout that neither dimmed the monitors nor stopped the
+    /// render loop, with no error anywhere to show for it.</summary>
+    private static void Animate(UIElement target, double to, double seconds, Action? onCompleted = null)
     {
         var animation = new DoubleAnimation(to, TimeSpan.FromSeconds(Math.Max(0.01, seconds)))
         {
             EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
             FillBehavior = FillBehavior.HoldEnd,
         };
+
+        if (onCompleted is not null) animation.Completed += (_, _) => onCompleted();
+
         target.BeginAnimation(UIElement.OpacityProperty, animation);
-        return animation;
     }
 
-    /// <summary>Builds one opacity timeline from (value, at-second) pairs.</summary>
-    private static DoubleAnimationUsingKeyFrames Keys(UIElement target, params (double Value, double At)[] frames)
+    /// <summary>Builds one opacity timeline from (value, at-second) pairs. The callback comes
+    /// first for the same reason as in <see cref="Animate"/>.</summary>
+    private static void Keys(UIElement target, Action? onCompleted, params (double Value, double At)[] frames)
     {
         var animation = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.HoldEnd };
 
@@ -380,8 +398,9 @@ public sealed class OverlayWindow : Window
                 new SineEase { EasingMode = EasingMode.EaseInOut }));
         }
 
+        if (onCompleted is not null) animation.Completed += (_, _) => onCompleted();
+
         target.BeginAnimation(UIElement.OpacityProperty, animation);
-        return animation;
     }
 
     /// <summary>Fades the bubbles out and stops the render loop once they're gone.</summary>

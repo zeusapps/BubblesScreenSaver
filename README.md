@@ -260,9 +260,11 @@ Measured on a 2560×1600 desktop with 22 artifacts, as a percentage of **one** C
 | Soap bubbles (pre-rendered sprites), no detector | ~9% |
 | Zone, `Animated: false` (same shapes, frozen) + detector | ~31% |
 | Zone, `Animated: true` + detector | ~65–75% |
+| Any theme, once the screen has gone black | ~4% |
 
-On a many-core machine the top figure is a few percent of total CPU, but it is real, and it
-runs while you are away. `Animated: false` keeps every shape and the detector for about a third
+Rendering stops once the screen actually reaches black, so the long tail of an idle night
+costs almost nothing. On a many-core machine the top figure is a few percent of total CPU, but
+it is real, and it runs while you are away. `Animated: false` keeps every shape and the detector for about a third
 of the cost — tray → *Animate artifacts*. `MaxFps` and `BubbleCount` scale it further.
 
 The gap is inherent to drawing vector content live: WPF re-rasterises it on every composition
