@@ -51,13 +51,34 @@ internal static class Program
 
         Updater.SweepOldBinaries();
 
-        // The mutex is scoped tightly: a relaunch after an update must happen once it has been
-        // released, or the new process finds the old one still holding it and exits.
-        using (var singleInstance = new Mutex(initiallyOwned: true, "Bubbles.Overlay.SingleInstance", out var isFirst))
+        // One overlay is plenty. The wait matters: after an update the outgoing process is
+        // still shutting down when its replacement starts, and an instant give-up meant the
+        // app quietly failed to come back at all. A few seconds of patience costs a manual
+        // second launch nothing -- it still exits, just a moment later.
+        using (var singleInstance = new Mutex(initiallyOwned: false, "Bubbles.Overlay.SingleInstance"))
         {
-            if (!isFirst) return;
+            var acquired = false;
 
-            new App().Run();
+            try
+            {
+                acquired = singleInstance.WaitOne(TimeSpan.FromSeconds(8));
+            }
+            catch (AbandonedMutexException)
+            {
+                // The previous holder died without releasing it, which is ours to take.
+                acquired = true;
+            }
+
+            if (!acquired) return;
+
+            try
+            {
+                new App().Run();
+            }
+            finally
+            {
+                singleInstance.ReleaseMutex();
+            }
         }
 
         Updater.RelaunchIfSwapped();
