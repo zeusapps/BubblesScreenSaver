@@ -47,11 +47,11 @@ jobs:
         run: |
           # The published release is self-contained so it runs on a machine with no .NET
           # installed. Building from source gives the lighter framework-dependent binary.
-          dotnet publish src\Bubbles\Bubbles.csproj -c Release -p:Version=$env:VERSION -p:SelfContained=true -p:EnableCompressionInSingleFile=true -p:PublishDir=$env:GITHUB_WORKSPACE\out\ --nologo
+          dotnet publish src\Bubbles\Bubbles.csproj -c Release -p:Version=$env:VERSION -p:SelfContained=true -p:EnableCompressionInSingleFile=true --nologo
           if ($LASTEXITCODE -ne 0) { throw 'publish failed' }
 
           New-Item -ItemType Directory -Force artifacts | Out-Null
-          Copy-Item out\Bubbles.exe artifacts\Bubbles.exe
+          Copy-Item dist\Bubbles.exe artifacts\Bubbles.exe
 
       # Runs only when a certificate is configured. Add repository secrets
       # SIGNING_PFX_BASE64 and SIGNING_PFX_PASSWORD to enable it; without them the release is

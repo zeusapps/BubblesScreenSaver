@@ -167,6 +167,23 @@ public sealed class DisplayBlackout
     private void RestoreHdrFromDisk()
     {
         _hdrTurnedOff.Load();
+
+        // Adapter LUIDs are handed out afresh at every boot, so a record written before a
+        // reboot names each display by an id that no longer resolves: the restore fails, the
+        // entry is never settled, and the display stays SDR for good. Match the stored name
+        // against what is attached now and adopt its current identity.
+        //
+        // By name, because that is all a stored entry has to go on. Two identical monitors
+        // report the same one -- in which case either is as good as the other, since what is
+        // being restored is the same setting on both.
+        var attached = DisplayInfo.AllTargets();
+
+        _hdrTurnedOff.Remap(saved =>
+            attached.FirstOrDefault(target => target.Name == saved.Name) is { } current &&
+            HdrKey(current) != HdrKey(saved)
+                ? current
+                : saved);
+
         RestoreHdrWhereAttached("previous run");
     }
 }

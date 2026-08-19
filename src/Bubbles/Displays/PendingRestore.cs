@@ -9,7 +9,9 @@ namespace Bubbles.Displays;
 /// were recorded.</param>
 public readonly record struct Settlement(int Restored, IReadOnlyList<string> StillOwed)
 {
-    public bool Complete => StillOwed.Count == 0;
+    // Null-tolerant because default(Settlement) leaves StillOwed null, and a property that
+    // reads as total should not be the thing that throws.
+    public bool Complete => StillOwed is null or { Count: 0 };
 }
 
 /// <summary>A set of original values owed back to hardware that may not be there to receive
@@ -106,6 +108,20 @@ public sealed class PendingRestore<T> where T : class
         }
     }
 
+    /// <summary>Rewrites the owed entries. For identity that does not survive as long as the
+    /// record does -- an adapter LUID is handed out afresh at every boot, so an entry reloaded
+    /// after a reboot names something that no longer resolves and could never be settled.</summary>
+    public void Remap(Func<T, T> map)
+    {
+        lock (_gate)
+        {
+            if (_owed.Count == 0) return;
+
+            _owed = _owed.Select(map).ToList();
+            Persist(_owed);
+        }
+    }
+
     /// <summary>Hands the owed entries to <paramref name="restore"/>, which returns the keys it
     /// verified. Those are forgotten; everything else stays owed and is retried later.</summary>
     public Settlement Settle(Func<IReadOnlyList<T>, IEnumerable<string>> restore, string why)
@@ -123,11 +139,18 @@ public sealed class PendingRestore<T> where T : class
         lock (_gate)
         {
             _owed = _owed.Where(entry => !done.Contains(_key(entry))).ToList();
-            left = _owed;
-            Persist(left);
+
+            // A copy, not the live list: the logging below runs outside the lock, and Remember
+            // adds to _owed in place.
+            left = _owed.ToList();
+            Persist(_owed);
         }
 
-        var restored = owed.Count - left.Count;
+        // Counted from what was actually settled rather than from the change in length, which
+        // would under-report -- or go negative -- if anything were recorded while the restore
+        // was running. It deliberately runs outside the lock, and for HDR it provokes display
+        // changes that come back through this same class.
+        var restored = owed.Count(entry => done.Contains(_key(entry)));
 
         if (restored > 0) Diagnostics.Log($"{_what}: restored {restored} ({why})");
         if (left.Count > 0)

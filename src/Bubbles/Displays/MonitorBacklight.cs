@@ -84,7 +84,7 @@ public sealed class MonitorBacklight
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern bool GetMonitorInfoW(IntPtr monitor, ref MonitorInfoEx info);
 
-/// <summary>Public so the state file can be serialised, and so the bookkeeping can be
+    /// <summary>Public so the state file can be serialised, and so the bookkeeping can be
     /// exercised without a monitor attached.</summary>
     public sealed record Saved(string Device, string Description, uint Brightness);
 
@@ -143,10 +143,23 @@ public sealed class MonitorBacklight
 
         var accepted = new List<Saved>();
 
+        // One enumeration, deliberately. An earlier version read every monitor in a first pass
+        // and dimmed them in a second, which is tidier to read and does not work: opening and
+        // destroying the physical monitor handles twice in quick succession leaves this
+        // display accepting the write, verifying it, and then sliding back to full brightness
+        // a second later. Measured, not theorised.
         ForEachMonitor((handle, device, description) =>
         {
             uint minimum = 0, current = 0, maximum = 0;
             if (!GetMonitorBrightness(handle, ref minimum, ref current, ref maximum)) return;
+
+            // On disk before the change it describes, monitor by monitor. Recording the whole
+            // set afterwards would leave a window in which everything is at minimum with
+            // nothing to say what it was -- exactly the stranded-monitor failure this record
+            // exists to prevent. Anything already owed keeps its first original, so a monitor
+            // that reconnected at zero does not get zero written down as its brightness.
+            var original = new Saved(device, description, current);
+            _owed.Remember([original]);
 
             // The brightness goes down first, so that a monitor which refuses the standby
             // request is still dark rather than untouched.
@@ -162,6 +175,9 @@ public sealed class MonitorBacklight
 
             if (!took && current != minimum)
             {
+                // Nothing moved, so nothing is owed back.
+                _owed.Forget([original]);
+
                 Diagnostics.Log($"{device} ignored the backlight request " +
                                 $"(asked {current}->{minimum}, still reads {verifyCurrent}). " +
                                 "The usual cause is HDR: while it is on, Windows owns the " +
@@ -170,7 +186,7 @@ public sealed class MonitorBacklight
                 return;
             }
 
-            accepted.Add(new Saved(device, description, current));
+            accepted.Add(original);
 
             if (alsoStandby) SetVCPFeature(handle, (byte)PowerModeVcp, PowerStandby);
         });
@@ -181,9 +197,6 @@ public sealed class MonitorBacklight
             return;
         }
 
-        // Anything already owed from an earlier cycle keeps its first original: a monitor that
-        // reconnected at zero must not have zero recorded as the brightness to go back to.
-        _owed.Remember(accepted);
         _dimmed = true;
 
         Diagnostics.Log($"dimmed {accepted.Count} external monitor(s)" + (alsoStandby ? " and asked for standby" : ""));

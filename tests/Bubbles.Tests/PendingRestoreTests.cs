@@ -180,6 +180,76 @@ public sealed class PendingRestoreTests : IDisposable
         Assert.Equal(0, owed.Count);
     }
 
+    // ---- identity that outlives the thing identifying it -------------------------------
+
+    [Fact]
+    public void Entries_can_be_re_identified_after_a_reload()
+    {
+        // An adapter LUID is reissued at every boot, so a reloaded entry names something that
+        // no longer resolves. Without a way to adopt the current identity it could never be
+        // settled, and the display would stay changed for good.
+        New().Remember([new Entry("stale-id", 100)]);
+
+        var reloaded = New();
+        reloaded.Load();
+        reloaded.Remap(entry => entry with { Device = "current-id" });
+
+        Assert.Equal("current-id", Assert.Single(reloaded.Owed).Device);
+        Assert.Equal(100u, Assert.Single(reloaded.Owed).Brightness);
+    }
+
+    [Fact]
+    public void A_re_identified_entry_settles_under_its_new_key()
+    {
+        var owed = New();
+        owed.Remember([new Entry("stale-id", 100)]);
+        owed.Remap(entry => entry with { Device = "current-id" });
+
+        var settled = owed.Settle(_ => ["current-id"], "restore");
+
+        Assert.Equal(1, settled.Restored);
+        Assert.Equal(0, owed.Count);
+    }
+
+    [Fact]
+    public void Re_identifying_survives_another_restart()
+    {
+        var owed = New();
+        owed.Remember([new Entry("stale-id", 100)]);
+        owed.Remap(entry => entry with { Device = "current-id" });
+
+        var reloaded = New();
+        reloaded.Load();
+
+        Assert.Equal("current-id", Assert.Single(reloaded.Owed).Device);
+    }
+
+    // ---- counting -------------------------------------------------------------------------
+
+    [Fact]
+    public void The_restored_count_is_what_was_settled_not_the_change_in_length()
+    {
+        var owed = New();
+        owed.Remember([new Entry("A", 100)]);
+
+        // The restore callback runs outside the lock, and for HDR it provokes display changes
+        // that come back through this same object. Deriving the count from list lengths would
+        // under-report here, and can go negative.
+        var settled = owed.Settle(entries =>
+        {
+            owed.Remember([new Entry("B", 80)]);
+            return entries.Select(e => e.Device);
+        }, "restore");
+
+        Assert.Equal(1, settled.Restored);
+    }
+
+    [Fact]
+    public void A_default_settlement_does_not_throw_when_asked_whether_it_is_complete()
+    {
+        Assert.True(default(Settlement).Complete);
+    }
+
     // ---- degenerate cases ----------------------------------------------------------------
 
     [Fact]
