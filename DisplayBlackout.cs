@@ -24,6 +24,7 @@ public sealed class DisplayBlackout
 {
     private sealed record SavedHdr(uint AdapterLow, int AdapterHigh, uint Id, string Name);
 
+
     private static string HdrStateFile => Path.Combine(Settings.Directory, "hdr-state.json");
 
     private readonly MonitorBacklight _backlight = new();
@@ -44,7 +45,14 @@ public sealed class DisplayBlackout
         _afterReconnect.Tick += (_, _) =>
         {
             _afterReconnect.Stop();
+
+            // Not while the screen is meant to be dark. Switching HDR off is itself a display
+            // change, so without this guard the retry fired moments later and undid the very
+            // blackout that had just been set up.
+            if (_dark) return;
+
             _backlight.RestorePending();
+            RestoreHdrPending();
         };
 
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (_, _) =>
@@ -104,8 +112,16 @@ public sealed class DisplayBlackout
 
     private bool TurnHdrOff()
     {
-        var enabled = DisplayInfo.WithHdrEnabled();
-        if (enabled.Count == 0) return false;
+        // Only displays that stand to gain. Switching HDR off is worth a mode change solely
+        // because it revives DDC/CI so a backlight can be dimmed -- and the built-in panel has
+        // no DDC/CI backlight to reach, so toggling it costs a re-sync and buys nothing.
+        var enabled = DisplayInfo.WithHdrEnabled().Where(t => !t.Internal).ToList();
+
+        if (enabled.Count == 0)
+        {
+            Diagnostics.Log("no external display has HDR on; leaving HDR alone");
+            return false;
+        }
 
         // Recorded before the change, so a crash between here and the restore is recoverable.
         Persist(enabled);
@@ -131,13 +147,38 @@ public sealed class DisplayBlackout
 
     private void RestoreHdr()
     {
+        RestoreHdrWhereAttached("restore");
+    }
+
+    /// <summary>Retries any display still owed its HDR. A display unplugged while its HDR was
+    /// off keeps the setting when it returns -- Windows persists that per display -- so the
+    /// record has to outlive the disconnection.</summary>
+    public void RestoreHdrPending() => RestoreHdrWhereAttached("reconnect");
+
+    private void RestoreHdrWhereAttached(string why)
+    {
         if (_hdrTurnedOff.Count == 0) return;
 
-        foreach (var target in _hdrTurnedOff) DisplayInfo.SetHdr(target, true);
+        var stillOwed = new List<DisplayInfo.Target>();
+        var done = 0;
 
-        Diagnostics.Log($"HDR restored on {_hdrTurnedOff.Count} display(s)");
-        _hdrTurnedOff = new List<DisplayInfo.Target>();
-        Persist(new List<DisplayInfo.Target>());
+        foreach (var target in _hdrTurnedOff)
+        {
+            DisplayInfo.SetHdr(target, true);
+
+            // Believe it only once the display says so. A disconnected one cannot be asked,
+            // which is exactly when the record must be kept.
+            if (DisplayInfo.HdrEnabled(target) == true) done++;
+            else stillOwed.Add(target);
+        }
+
+        _hdrTurnedOff = stillOwed;
+        Persist(stillOwed);
+
+        if (done > 0) Diagnostics.Log($"HDR restored on {done} display(s) ({why})");
+        if (stillOwed.Count > 0)
+            Diagnostics.Log($"HDR still owed to {stillOwed.Count} display(s) not attached: " +
+                            string.Join(", ", stillOwed.Select(t => t.Name)));
     }
 
     private void RestoreHdrFromDisk()
@@ -151,18 +192,28 @@ public sealed class DisplayBlackout
             {
                 Diagnostics.Log($"restoring HDR on {saved.Count} display(s) left off by a previous run");
 
-                foreach (var entry in saved)
-                {
-                    DisplayInfo.SetHdr(
-                        new DisplayInfo.Target(entry.AdapterLow, entry.AdapterHigh, entry.Id, entry.Name), true);
-                }
+                _hdrTurnedOff = saved
+                    .Select(e => new DisplayInfo.Target(e.AdapterLow, e.AdapterHigh, e.Id, e.Name))
+                    .ToList();
+
+                RestoreHdrWhereAttached("previous run");
+                return;
             }
 
             File.Delete(HdrStateFile);
         }
         catch (Exception ex)
         {
-            Diagnostics.Log($"HDR recovery failed: {ex.Message}");
+            // An unreadable record would otherwise be retried, and fail, on every launch.
+            Diagnostics.Log($"HDR recovery failed, discarding the record: {ex.Message}");
+
+            try
+            {
+                if (File.Exists(HdrStateFile)) File.Delete(HdrStateFile);
+            }
+            catch
+            {
+            }
         }
     }
 

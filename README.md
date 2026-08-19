@@ -277,6 +277,11 @@ brightness *and* power-mode writes are accepted and silently discarded, and even
 `GetMonitorCapabilities` fails. Confirmed on an ASUS XG27WCS over DisplayPort, where every
 write returned success and changed nothing until HDR was switched off.
 
+Only displays that stand to gain are touched: **HDR is switched off on external displays that
+have it on, and never on the built-in panel**, which has no DDC/CI backlight to reach and so
+would pay for a mode change and get nothing. A display you already have HDR off on is never
+touched, and never switched on.
+
 So the blackout switches HDR off first, waits for the displays to re-sync, and only then
 touches the backlight. On the way back the order is reversed — **backlight restored first,
 then HDR** — because re-enabling HDR kills DDC again, and restoring the other way round would
@@ -289,6 +294,12 @@ leaves HDR alone, in which case an HDR monitor simply keeps glowing.
 
 Every step is written to disk *before* it happens, so a session that ends badly is undone on
 the next run. Verified by killing the process mid-blackout: HDR came back on the next launch.
+
+Neither setting is forgotten if a monitor disappears mid-blackout. Brightness and HDR are each
+cleared per display and only once the change has been *read back*, so a cable pulled while the
+screen is dark leaves a record that is retried when the display returns and again at the next
+launch. Windows persists HDR per display, so dropping that record would have left a monitor
+with HDR off indefinitely.
 
 ### When a monitor ignores it
 

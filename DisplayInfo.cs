@@ -15,6 +15,7 @@ internal static class DisplayInfo
     private const uint GetTargetName = 2;
     private const uint GetAdvancedColorInfo = 9;
     private const uint SetAdvancedColorState = 10;
+    private const uint InternalDisplay = 0x80000000;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Luid
@@ -141,15 +142,17 @@ internal static class DisplayInfo
     [DllImport("user32.dll")]
     private static extern int DisplayConfigSetDeviceInfo(ref SetAdvancedColor request);
 
-    /// <summary>One display, identified well enough to come back to later.</summary>
-    public sealed record Target(uint AdapterLow, int AdapterHigh, uint Id, string Name);
+    /// <summary>One display, identified well enough to come back to later.
+    /// <paramref name="Internal"/> marks the built-in panel, which has no DDC/CI backlight to
+    /// reach and therefore nothing to gain from having its HDR switched off.</summary>
+    public sealed record Target(uint AdapterLow, int AdapterHigh, uint Id, string Name, bool Internal = false);
 
     /// <summary>Every active display that currently has HDR switched on.</summary>
     public static List<Target> WithHdrEnabled()
     {
         var found = new List<Target>();
 
-        ForEachTarget((adapter, id, name) =>
+        ForEachTarget((adapter, id, name, technology) =>
         {
             // Named flags, because `info.Value` on a nullable struct means something else
             // entirely and reads as if it were this field.
@@ -158,10 +161,19 @@ internal static class DisplayInfo
             var supported = (flags & 1) != 0;
             var enabled = (flags & 2) != 0;
 
-            if (supported && enabled) found.Add(new Target(adapter.Low, adapter.High, id, name));
+            if (supported && enabled)
+                found.Add(new Target(adapter.Low, adapter.High, id, name, technology == InternalDisplay));
         });
 
         return found;
+    }
+
+    /// <summary>Whether HDR is on for this display right now, or null if it cannot be asked --
+    /// which is what a disconnected display looks like.</summary>
+    public static bool? HdrEnabled(Target target)
+    {
+        var adapter = new Luid { Low = target.AdapterLow, High = target.AdapterHigh };
+        return ColourFlags(adapter, target.Id) is { } flags ? (flags & 2) != 0 : null;
     }
 
     /// <summary>Every active display that can do HDR, whatever state it is in.</summary>
@@ -169,10 +181,10 @@ internal static class DisplayInfo
     {
         var found = new List<Target>();
 
-        ForEachTarget((adapter, id, name) =>
+        ForEachTarget((adapter, id, name, technology) =>
         {
             if (ColourFlags(adapter, id) is { } flags && (flags & 1) != 0)
-                found.Add(new Target(adapter.Low, adapter.High, id, name));
+                found.Add(new Target(adapter.Low, adapter.High, id, name, technology == InternalDisplay));
         });
 
         return found;
@@ -216,7 +228,7 @@ internal static class DisplayInfo
     }
 
     /// <summary>Walks the active display paths, handing each one its adapter, id and name.</summary>
-    private static void ForEachTarget(Action<Luid, uint, string> body)
+    private static void ForEachTarget(Action<Luid, uint, string, uint> body)
     {
         try
         {
@@ -248,7 +260,7 @@ internal static class DisplayInfo
                     ? name.FriendlyName.Trim()
                     : "display";
 
-                body(target.AdapterId, target.Id, friendly);
+                body(target.AdapterId, target.Id, friendly, target.OutputTechnology);
             }
         }
         catch (Exception ex)
