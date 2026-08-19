@@ -135,7 +135,15 @@ public sealed class DisplayBlackout
         // Anything that refused the change is not owed anything back.
         _hdrTurnedOff.Forget(enabled.Except(turnedOff));
 
-        if (turnedOff.Count == 0) return false;
+        if (turnedOff.Count == 0)
+        {
+            // Worth saying out loud: the backlight is about to be asked to move while HDR is
+            // still on, which it will refuse, and the monitor stays lit through the blackout
+            // with nothing else explaining why.
+            Diagnostics.Log($"HDR could not be switched off on any of {enabled.Count} display(s); " +
+                            "their backlights will refuse to dim");
+            return false;
+        }
 
         Diagnostics.Log($"HDR switched off on {turnedOff.Count} display(s): " +
                         string.Join(", ", turnedOff.Select(t => t.Name)));
