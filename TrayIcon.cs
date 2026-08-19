@@ -12,6 +12,8 @@ public sealed class TrayIcon : IDisposable
     private readonly Updater _updater;
     private readonly Action _exit;
     private readonly ToolStripMenuItem _update;
+    private readonly ToolStripMenuItem _blackoutNow;
+    private readonly List<ToolStripMenuItem> _zoneOnly = new();
     private readonly ToolStripMenuItem _pause;
     private readonly ToolStripMenuItem _alwaysOn;
     private readonly ToolStripMenuItem _startup;
@@ -41,7 +43,8 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add(new ToolStripMenuItem($"Bubbles v{Updater.Current.ToString(3)}") { Enabled = false });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Item("Start bubbles now", () => _idle.StartNow()));
-        menu.Items.Add(Item("Emission / black screen now", () => _idle.BlackoutNow()));
+        _blackoutNow = Item("Black screen now", () => _idle.BlackoutNow());
+        menu.Items.Add(_blackoutNow);
         menu.Items.Add(_pause);
         menu.Items.Add(_alwaysOn);
         menu.Items.Add(new ToolStripSeparator());
@@ -69,9 +72,9 @@ public sealed class TrayIcon : IDisposable
             Choice("Soap bubbles — the original", s => s.Theme = OverlayTheme.Soap,
                    s => s.Theme == OverlayTheme.Soap),
             new ToolStripSeparator(),
-            Toggle("Veles artifact detector", s => s.ShowDetector, (s, v) => s.ShowDetector = v),
-            Toggle("Animate artifacts (costs CPU)", s => s.Animated, (s, v) => s.Animated = v),
-            Toggle("Emission blackout", s => s.Emission, (s, v) => s.Emission = v),
+            ZoneOnly(Toggle("Veles artifact detector", s => s.ShowDetector, (s, v) => s.ShowDetector = v)),
+            ZoneOnly(Toggle("Animate artifacts (costs CPU)", s => s.Animated, (s, v) => s.Animated = v)),
+            ZoneOnly(Toggle("Emission blackout", s => s.Emission, (s, v) => s.Emission = v)),
             Toggle("Hide pointer when idle", s => s.HideCursor, (s, v) => s.HideCursor = v)));
         menu.Items.Add(Submenu("Look",
             Item("More bubbles",  () => Tweak(s => s.BubbleCount += 4)),
@@ -106,6 +109,13 @@ public sealed class TrayIcon : IDisposable
             IdleController.Stage.Blackout => "Bubbles \u2014 black screen",
             _ => "Bubbles",
         };
+    }
+
+    /// <summary>Marks a menu entry as meaningless outside the Zone theme.</summary>
+    private ToolStripMenuItem ZoneOnly(ToolStripMenuItem item)
+    {
+        _zoneOnly.Add(item);
+        return item;
     }
 
     private void RefreshUpdateItem()
@@ -174,6 +184,13 @@ public sealed class TrayIcon : IDisposable
         _alwaysOn.Checked = _settings.AlwaysOn;
         _startup.Checked = Startup.IsEnabled;
         RefreshUpdateItem();
+
+        // Artifacts, the detector and Emissions are all Zone furniture; greying them out is
+        // clearer than leaving settings on offer that the current theme ignores.
+        var zone = _settings.Theme == OverlayTheme.Zone;
+        foreach (var item in _zoneOnly) item.Enabled = zone;
+
+        _blackoutNow.Text = zone && _settings.Emission ? "Emission now" : "Black screen now";
     }
 
     private void TogglePause()

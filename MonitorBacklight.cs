@@ -168,8 +168,10 @@ public sealed class MonitorBacklight
             if (!took && current != minimum)
             {
                 Diagnostics.Log($"{device} ignored the backlight request " +
-                                $"(asked {current}->{minimum}, still reads {verifyCurrent}); " +
-                                "DDC/CI is probably disabled or blocked on this link");
+                                $"(asked {current}->{minimum}, still reads {verifyCurrent}). " +
+                                "The usual cause is HDR: while it is on, Windows owns the " +
+                                "luminance pipeline and the monitor's own brightness is locked. " +
+                                "Run --dim-test to see which displays have HDR enabled.");
                 return;
             }
 

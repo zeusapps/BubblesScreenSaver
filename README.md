@@ -216,7 +216,8 @@ which is darker still but slower to come back, and is off by default.
 Bubbles.exe --dim-test
 ```
 
-lists every monitor, what it supports, and whether a change actually took.
+lists every monitor by name, how it is connected, whether HDR is on, what backlight control it
+supports, and whether a change actually took.
 
 ### When a monitor ignores it
 
@@ -227,8 +228,13 @@ sits at full brightness.
 
 If yours ignores them, in rough order of likelihood:
 
+- **HDR is enabled.** This is by far the most common cause. While HDR is on, Windows owns the
+  luminance pipeline and the monitor's own brightness control is locked — DDC writes are
+  accepted and discarded. Turn it off in *Settings → System → Display →* pick the monitor *→
+  Use HDR*, then re-run `--dim-test`. Confirmed on an ASUS XG27WCS over DisplayPort: every
+  brightness and power-mode write returned success and changed nothing, with HDR the only
+  cause left standing.
 - a **dock, hub or KVM** in the path — these frequently block the DDC channel;
-- **HDR is enabled**, which hands brightness to the system and locks the monitor's own control;
 - a **picture preset** (ASUS GameVisual, and equivalents) that locks brightness;
 - a vendor utility holding the channel — ASUS DisplayWidget Center, Armoury Crate, and friends;
 - **DDC/CI switched off** in the monitor's on-screen menu;

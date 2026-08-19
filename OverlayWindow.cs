@@ -221,9 +221,14 @@ public sealed class OverlayWindow : Window
         _field.SkinCount = SkinCount;
         _field.Apply(settings);
 
-        // Force every sprite to be re-fetched next frame, in case the theme changed.
+        // Switching theme swaps the element type outright -- live-drawn artifacts for bitmap
+        // sprites -- so the visuals have to be rebuilt, not just re-pointed. Without this the
+        // old elements survived and kept drawing artifacts, at the wrong scale, because the
+        // unit box the transform divides by belongs to the other theme.
+        RebuildVisuals();
         foreach (var v in _visuals) v.Skin = -1;
-        if (!_blackout) _detectorLayer.Opacity = DetectorWanted ? 1 : 0;
+
+        if (!_blackout) SetDetectorVisible(DetectorWanted);
 
         settings.Save();
     }
@@ -243,10 +248,22 @@ public sealed class OverlayWindow : Window
         StretchOverVirtualDesktop();
         UpdateRegions();
 
-        _detectorLayer.Opacity = DetectorWanted ? 1 : 0;
+        SetDetectorVisible(DetectorWanted);
         if (CursorHidingWanted) NativeCursor.Hide();
 
         Fade(to: 1, seconds: _settings.FadeInSeconds, thenHide: false);
+    }
+
+    /// <summary>Shows or hides the detector.
+    ///
+    /// The animation has to be cleared first. Once a property has been animated with
+    /// FillBehavior.HoldEnd, the held value outranks anything assigned directly -- so after a
+    /// single blackout, assigning Opacity did nothing and the detector stayed on screen in a
+    /// theme that has no detector, frozen, because nothing was ticking it any more.</summary>
+    private void SetDetectorVisible(bool visible)
+    {
+        _detectorLayer.BeginAnimation(UIElement.OpacityProperty, null);
+        _detectorLayer.Opacity = visible ? 1 : 0;
     }
 
     /// <summary>Fades to (or back from) a solid black screen. The bubbles themselves emit
