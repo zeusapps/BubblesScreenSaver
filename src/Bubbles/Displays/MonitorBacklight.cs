@@ -202,6 +202,62 @@ public sealed class MonitorBacklight
         Diagnostics.Log($"dimmed {accepted.Count} external monitor(s)" + (alsoStandby ? " and asked for standby" : ""));
     }
 
+    /// <summary>Puts every monitor to full brightness without touching the record, standing in
+    /// for a monitor that has raised its own backlight. Only for --hold-test: it makes the
+    /// drift reproducible on demand instead of waiting an hour for a panel to do it by
+    /// itself.</summary>
+    internal void SimulateExternalChange()
+    {
+        ForEachMonitor((handle, _, _) =>
+        {
+            uint minimum = 0, current = 0, maximum = 0;
+            if (GetMonitorBrightness(handle, ref minimum, ref current, ref maximum))
+                SetMonitorBrightness(handle, maximum);
+        });
+    }
+
+    /// <summary>Puts the dim back on any monitor that has quietly drifted up again while the
+    /// screen is still meant to be dark.
+    ///
+    /// Monitors do this on their own. Nothing in Windows raised the backlight and no display
+    /// event was logged, but an hour into a blackout the panel was lit again -- a monitor
+    /// resetting its own brightness when it leaves its internal power-save, or an ambient-light
+    /// or adaptive-backlight feature deciding it knows better. DDC/CI is a request, not a lock.
+    ///
+    /// So the state is held rather than set once. Nothing is recorded here: the original was
+    /// written down when the dim began and must not be replaced by whatever the monitor has
+    /// wandered to, or the value it is owed becomes the value it drifted to.</summary>
+    /// <returns>The monitors that had to be put back.</returns>
+    public List<string> Reassert()
+    {
+        var owed = _owed.Owed;
+        if (owed.Count == 0) return new List<string>();
+
+        var dimmedAgain = new List<string>();
+
+        ForEachMonitor((handle, device, _) =>
+        {
+            if (owed.All(entry => entry.Device != device)) return;
+
+            uint minimum = 0, current = 0, maximum = 0;
+            if (!GetMonitorBrightness(handle, ref minimum, ref current, ref maximum)) return;
+
+            // Still where it was put; nothing to do, and nothing written to the monitor.
+            if (current <= minimum) return;
+
+            SetMonitorBrightness(handle, minimum);
+
+            uint verifyMinimum = 0, verifyCurrent = 0, verifyMaximum = 0;
+            if (GetMonitorBrightness(handle, ref verifyMinimum, ref verifyCurrent, ref verifyMaximum) &&
+                verifyCurrent <= verifyMinimum)
+            {
+                dimmedAgain.Add(device);
+            }
+        });
+
+        return dimmedAgain;
+    }
+
     /// <summary>Puts every monitor back where it was found. Anything not currently attached
     /// keeps its entry and is dealt with when it reappears.</summary>
     public void Restore()

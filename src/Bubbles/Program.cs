@@ -97,6 +97,41 @@ internal static class Program
             return;
         }
 
+        // `--hold-test` checks that a blackout survives a monitor putting its own backlight
+        // back up, which is a thing monitors do: dim, shove the brightness back to maximum the
+        // way the panel would, and see whether the hold notices and undoes it.
+        if (args.Length >= 1 && args[0] == "--hold-test")
+        {
+            // Always a scratch record: this is a synthetic drift, and it must never end up in
+            // the state file a running instance is relying on.
+            var monitors = new MonitorBacklight(
+                Path.Combine(Path.GetTempPath(), "bubbles-hold-test.json"));
+
+            Console.WriteLine("before:");
+            monitors.Read().ForEach(Console.WriteLine);
+
+            monitors.Dim(alsoStandby: false);
+            Thread.Sleep(600);
+            Console.WriteLine("dimmed:");
+            monitors.Read().ForEach(Console.WriteLine);
+
+            monitors.SimulateExternalChange();
+            Thread.Sleep(600);
+            Console.WriteLine("after the monitor raises itself:");
+            monitors.Read().ForEach(Console.WriteLine);
+
+            var again = monitors.Reassert();
+            Thread.Sleep(600);
+            Console.WriteLine($"reassert put back {again.Count}: {string.Join(", ", again)}");
+            monitors.Read().ForEach(Console.WriteLine);
+
+            monitors.Restore();
+            Thread.Sleep(400);
+            Console.WriteLine("restored:");
+            monitors.Read().ForEach(Console.WriteLine);
+            return;
+        }
+
         // `--hdr on|off` switches HDR on every display that supports it. Only here so the
         // blackout path can be set up and torn down when testing.
         if (args.Length >= 2 && args[0] == "--hdr")

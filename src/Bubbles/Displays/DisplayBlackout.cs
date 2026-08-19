@@ -26,6 +26,7 @@ public sealed class DisplayBlackout
     private readonly MonitorBacklight _backlight = new();
     private readonly DispatcherTimer _afterModeChange;
     private readonly DispatcherTimer _afterReconnect;
+    private readonly DispatcherTimer _whileDark;
 
     // Displays owed their HDR back. A display unplugged while its HDR is off keeps the setting
     // when it returns -- Windows persists that per display -- so the record has to outlive the
@@ -73,6 +74,47 @@ public sealed class DisplayBlackout
             _afterModeChange.Stop();
             if (_dark) DimBacklights();
         };
+
+        // A dim is a request, not a lock: a monitor can put its own backlight back up, and
+        // does. Nothing raised it, no display event was logged, and an hour into a blackout
+        // the panel was lit again -- so the state is checked rather than assumed to hold.
+        //
+        // This reads over DDC/CI and only writes when something has actually moved, so an
+        // undisturbed blackout costs one read per monitor every twenty seconds and nothing
+        // else. It never touches a power state; see the note at the top of IdleController for
+        // why that matters.
+        _whileDark = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(20),
+        };
+
+        _whileDark.Tick += (_, _) =>
+        {
+            if (!_dark)
+            {
+                _whileDark.Stop();
+                return;
+            }
+
+            // HDR coming back would kill DDC/CI outright, so the backlight could not be put
+            // back even in principle. Worth saying, and worth undoing.
+            var hdrBack = _hdrTurnedOff.Owed.Where(t => DisplayInfo.HdrEnabled(t) == true).ToList();
+
+            if (hdrBack.Count > 0)
+            {
+                Diagnostics.Log($"HDR came back on {hdrBack.Count} display(s) during blackout: " +
+                                string.Join(", ", hdrBack.Select(t => t.Name)));
+
+                foreach (var target in hdrBack) DisplayInfo.SetHdr(target, false);
+                return; // let the mode change settle; the next tick dims.
+            }
+
+            var again = _backlight.Reassert();
+
+            if (again.Count > 0)
+                Diagnostics.Log($"backlight had drifted back up on {again.Count} monitor(s), " +
+                                $"dimmed again: {string.Join(", ", again)}");
+        };
     }
 
     public void Apply(Settings settings) => _settings = settings;
@@ -101,6 +143,7 @@ public sealed class DisplayBlackout
     public void Leave()
     {
         _afterModeChange.Stop();
+        _whileDark.Stop();
         if (!_dark) return;
         _dark = false;
 
@@ -111,7 +154,10 @@ public sealed class DisplayBlackout
 
     private void DimBacklights()
     {
-        if (_settings.DimMonitorBacklight) _backlight.Dim(_settings.MonitorStandby);
+        if (!_settings.DimMonitorBacklight) return;
+
+        _backlight.Dim(_settings.MonitorStandby);
+        _whileDark.Start();
     }
 
     private bool TurnHdrOff()

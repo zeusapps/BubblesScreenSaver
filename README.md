@@ -318,6 +318,22 @@ changes and keyed by display device, so even a session that ends badly restores 
 monitor on the next run. `MonitorStandby: true` additionally asks monitors to enter standby,
 which is darker still but slower to come back, and is off by default.
 
+**The dim is held, not just set.** DDC/CI is a request, not a lock, and monitors put their own
+backlights back up — an hour into a blackout the panel was lit again with nothing in Windows
+having raised it and no display event logged, which points at the monitor resetting itself as
+it leaves its internal power-save. So while the screen is dark the brightness is re-read every
+twenty seconds and put back if it has moved. An undisturbed blackout costs one DDC read per
+monitor per tick and writes nothing. A drift does not poison the record: the value the monitor
+is owed stays the one captured before the first dim, never whatever it wandered to.
+
+```
+Bubbles.exe --hold-test
+```
+
+dims, shoves the brightness back to maximum the way a monitor would, and reports whether the
+hold noticed. It needs HDR off on the monitor to mean anything, since HDR on makes every
+brightness write a no-op.
+
 ```
 Bubbles.exe --dim-test
 ```
