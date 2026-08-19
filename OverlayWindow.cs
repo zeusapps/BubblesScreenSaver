@@ -68,6 +68,14 @@ public sealed class OverlayWindow : Window
     /// <summary>True once the bubbles are on screen (or on their way in).</summary>
     public bool IsShowing => _shown;
 
+    /// <summary>Raised once the screen has actually reached black -- not when the blackout
+    /// begins, since an Emission spends twelve seconds getting there and dimming the monitors
+    /// early would cut the show short.</summary>
+    public event Action? WentDark;
+
+    /// <summary>Raised the moment the blackout ends.</summary>
+    public event Action? LeftDark;
+
     private bool IsZone => _settings.Theme == OverlayTheme.Zone;
 
     private bool DetectorWanted => IsZone && _settings.ShowDetector;
@@ -302,11 +310,13 @@ public sealed class OverlayWindow : Window
             _emitting = false;
             _field.Agitation = 1;
             Suspended = true;
+            WentDark?.Invoke();
         };
     }
 
     private void EndBlackout()
     {
+        LeftDark?.Invoke();
         _emitting = false;
         _emissionTime = 0;
         _field.Agitation = 1;

@@ -63,6 +63,16 @@ public sealed class Settings
     /// <summary>Run the bubbles all the time instead of waiting for you to go idle.</summary>
     public bool AlwaysOn { get; set; } = false;
 
+    /// <summary>Turn the backlight down on external monitors during blackout. Drawing black
+    /// is enough for OLED, where black is unlit; an LCD keeps glowing behind it. Restored
+    /// exactly as found, including after a crash.</summary>
+    public bool DimExternalMonitors { get; set; } = true;
+
+    /// <summary>Also ask external monitors to enter standby during blackout. Off by default:
+    /// minimum backlight is nearly as dark and cannot leave a monitor asleep if something goes
+    /// wrong. Some monitors take a second to come back, and a few need their power button.</summary>
+    public bool ExternalMonitorStandby { get; set; } = false;
+
     // ---- updates ----------------------------------------------------------------------
 
     /// <summary>Check GitHub for newer releases and download them in the background. The swap

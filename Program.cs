@@ -23,6 +23,32 @@ internal static class Program
             return;
         }
 
+        // `--dim-test` exercises the external-monitor backlight path: it reports what it
+        // finds, dims for a couple of seconds, and puts everything back.
+        if (args.Length >= 1 && args[0] == "--dim-test")
+        {
+            var displays = new ExternalDisplays();
+            Console.WriteLine($"DDC/CI capable monitor found: {displays.Available}");
+
+            displays.RecoverFromCrash();
+
+            Console.WriteLine("before:");
+            displays.Read().ForEach(Console.WriteLine);
+
+            displays.Dim(alsoStandby: false);
+            Thread.Sleep(1200);
+
+            Console.WriteLine("while dimmed:");
+            displays.Read().ForEach(Console.WriteLine);
+
+            displays.Restore();
+            Thread.Sleep(400);
+
+            Console.WriteLine("after restore:");
+            displays.Read().ForEach(Console.WriteLine);
+            return;
+        }
+
         Updater.SweepOldBinaries();
 
         // The mutex is scoped tightly: a relaunch after an update must happen once it has been

@@ -179,6 +179,8 @@ versus 151 MB.
 | `CollectRadius` | 60 | how close an artifact must drift to be collected; `0` disables |
 | `ShowDetector` | true | the hunting VELES detector (Zone theme only) |
 | `Emission` | true | Emission instead of a plain fade to black (Zone theme only) |
+| `DimExternalMonitors` | true | take external backlights to minimum over DDC/CI during blackout |
+| `ExternalMonitorStandby` | false | also ask external monitors to enter standby (darker, slower to wake) |
 | `AutoUpdate` | true | check for, download and stage new releases |
 | `UpdateCheckHours` | 24 | hours between update checks |
 
@@ -188,6 +190,44 @@ Artifacts moving over a *static* terminal don't protect the terminal's pixels �
 underneath is still burning in. `Dim` is the lever that matters: on OLED, near-black is
 genuinely-off pixels. `Dim: 0.9` keeps the desktop readable-ish while cutting almost all of the
 emission, and `BlackoutSeconds` is the real fix.
+
+## Non-OLED monitors
+
+Drawing black is a complete answer on OLED, where a black pixel is an unlit pixel. An LCD is
+still fully backlit behind that black and goes on glowing in a dark room.
+
+Where a monitor supports **DDC/CI**, the blackout stage takes its backlight to minimum and
+puts it back on wake. This is a display-side setting, not a power state — nothing about the
+machine's power management is touched. The original brightness is written to disk *before*
+anything changes, so even a session that ends badly restores the monitor on the next run.
+`ExternalMonitorStandby: true` additionally asks the monitor to enter standby, which is darker
+still but slower to come back, and is off by default.
+
+```
+Bubbles.exe --dim-test
+```
+
+reports what each monitor supports, dims briefly, and restores. Use it to find out where you
+stand.
+
+**Plenty of monitors accept DDC writes and quietly ignore them.** The app reads the value back
+and will tell you so rather than claiming success — a write returning `True` proves nothing.
+If yours ignores them, in rough order of likelihood:
+
+- it is connected through a **dock, hub or KVM**, which frequently blocks the DDC channel;
+- it is on **HDMI** — DDC is generally more reliable over DisplayPort;
+- **HDR is enabled**, which hands brightness control to the system and locks the monitor's own;
+- a vendor utility (ASUS DisplayWidget Center, and similar) is holding the channel;
+- DDC/CI is switched off in the monitor's OSD.
+
+A quick independent check: if [Twinkle Tray](https://twinkletray.com/) or Monitorian cannot
+change the brightness either, the problem is the monitor or the link, not this app.
+
+**The reliable fallback for any panel is to let Windows sleep the displays.** That switches an
+LCD's backlight off properly, which no software overlay can do. It needs nothing holding
+`ES_DISPLAY_REQUIRED` — so if you run PowerToys Awake, use plain "keep awake" rather than "keep
+screen on". The machine stays up, Windows blanks the panels on its own timer, and this app's
+blackout covers the interval before that happens.
 
 ## What the animation costs
 
