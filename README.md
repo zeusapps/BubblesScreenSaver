@@ -70,6 +70,13 @@ screen, which on a normal desktop is nearly always. Measured returning `Busy` fo
 maximised terminal, which would have held the screensaver off permanently. Only exclusive
 full-screen Direct3D and presentation mode are trusted.
 
+**The countdown restarts when the hold-off lifts.** A call produces no input, so the system
+idle timer climbs for its whole duration — hang up after forty minutes and a naive reading is
+already past every threshold at once, so the bubbles arrive the instant the call ends, possibly
+skipping straight to a black screen while you are still sitting there. Idle is therefore
+measured from the end of the call until you touch something, by
+[`IdleClock`](src/Bubbles/Session/IdleClock.cs).
+
 Asking for an Emission from the tray still works while held off; if you ask for it, you get it.
 
 ---

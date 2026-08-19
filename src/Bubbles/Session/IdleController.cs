@@ -22,6 +22,7 @@ public sealed class IdleController : IDisposable
 
     private readonly DispatcherTimer _timer;
     private readonly OverlayWindow _overlay;
+    private readonly IdleClock _clock = new();
     private Settings _settings;
 
     // A forced start has to survive the very click that requested it, so it's cancelled by the
@@ -80,8 +81,6 @@ public sealed class IdleController : IDisposable
             _forceBlackout = false;
         }
 
-        var idle = NativeInput.IdleSeconds();
-
         // Somebody on a call is not idle, whatever the input timer says. A deliberate request
         // from the tray still wins -- if you ask for it, you get it.
         var heldOffBy = _forceBubbles || _forceBlackout ? null : UserBusy.Reason(_settings);
@@ -91,6 +90,10 @@ public sealed class IdleController : IDisposable
             _heldOffBy = heldOffBy;
             Diagnostics.Log(heldOffBy is null ? "no longer held off" : $"holding off: {heldOffBy}");
         }
+
+        // Measured through the clock, so that hanging up starts the countdown again instead of
+        // arriving with every threshold already passed.
+        var idle = _clock.Elapsed(NativeInput.IdleSeconds(), heldOffBy is not null, Environment.TickCount64);
 
         if (heldOffBy is not null)
         {
