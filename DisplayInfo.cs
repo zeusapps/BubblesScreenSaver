@@ -14,6 +14,7 @@ internal static class DisplayInfo
     private const uint QueryOnlyActivePaths = 2;
     private const uint GetTargetName = 2;
     private const uint GetAdvancedColorInfo = 9;
+    private const uint SetAdvancedColorState = 10;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Luid
@@ -127,6 +128,134 @@ internal static class DisplayInfo
 
     [DllImport("user32.dll")]
     private static extern int DisplayConfigGetDeviceInfo(ref AdvancedColorInfo request);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SetAdvancedColor
+    {
+        public DeviceInfoHeader Header;
+
+        /// <summary>Bit 0 enables advanced colour; the rest is reserved.</summary>
+        public uint Value;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern int DisplayConfigSetDeviceInfo(ref SetAdvancedColor request);
+
+    /// <summary>One display, identified well enough to come back to later.</summary>
+    public sealed record Target(uint AdapterLow, int AdapterHigh, uint Id, string Name);
+
+    /// <summary>Every active display that currently has HDR switched on.</summary>
+    public static List<Target> WithHdrEnabled()
+    {
+        var found = new List<Target>();
+
+        ForEachTarget((adapter, id, name) =>
+        {
+            // Named flags, because `info.Value` on a nullable struct means something else
+            // entirely and reads as if it were this field.
+            if (ColourFlags(adapter, id) is not { } flags) return;
+
+            var supported = (flags & 1) != 0;
+            var enabled = (flags & 2) != 0;
+
+            if (supported && enabled) found.Add(new Target(adapter.Low, adapter.High, id, name));
+        });
+
+        return found;
+    }
+
+    /// <summary>Every active display that can do HDR, whatever state it is in.</summary>
+    public static List<Target> AllTargets()
+    {
+        var found = new List<Target>();
+
+        ForEachTarget((adapter, id, name) =>
+        {
+            if (ColourFlags(adapter, id) is { } flags && (flags & 1) != 0)
+                found.Add(new Target(adapter.Low, adapter.High, id, name));
+        });
+
+        return found;
+    }
+
+    /// <summary>Switches HDR on or off for one display. Returns whether the display agreed --
+    /// this is a mode change, and it does not always take.</summary>
+    public static bool SetHdr(Target target, bool enabled)
+    {
+        var request = new SetAdvancedColor
+        {
+            Header = new DeviceInfoHeader
+            {
+                Type = SetAdvancedColorState,
+                Size = (uint)Marshal.SizeOf<SetAdvancedColor>(),
+                AdapterId = new Luid { Low = target.AdapterLow, High = target.AdapterHigh },
+                Id = target.Id,
+            },
+            Value = enabled ? 1u : 0u,
+        };
+
+        var result = DisplayConfigSetDeviceInfo(ref request);
+        if (result != 0) Diagnostics.Log($"HDR {(enabled ? "on" : "off")} for {target.Name} failed: {result}");
+        return result == 0;
+    }
+
+    private static uint? ColourFlags(Luid adapter, uint id)
+    {
+        var request = new AdvancedColorInfo
+        {
+            Header = new DeviceInfoHeader
+            {
+                Type = GetAdvancedColorInfo,
+                Size = (uint)Marshal.SizeOf<AdvancedColorInfo>(),
+                AdapterId = adapter,
+                Id = id,
+            },
+        };
+
+        return DisplayConfigGetDeviceInfo(ref request) == 0 ? request.Value : null;
+    }
+
+    /// <summary>Walks the active display paths, handing each one its adapter, id and name.</summary>
+    private static void ForEachTarget(Action<Luid, uint, string> body)
+    {
+        try
+        {
+            if (GetDisplayConfigBufferSizes(QueryOnlyActivePaths, out var pathCount, out var modeCount) != 0)
+                return;
+
+            var paths = new PathInfo[pathCount];
+            var modes = new ModeInfo[modeCount];
+
+            if (QueryDisplayConfig(QueryOnlyActivePaths, ref pathCount, paths, ref modeCount, modes, IntPtr.Zero) != 0)
+                return;
+
+            for (var i = 0; i < pathCount; i++)
+            {
+                var target = paths[i].Target;
+
+                var name = new TargetDeviceName
+                {
+                    Header = new DeviceInfoHeader
+                    {
+                        Type = GetTargetName,
+                        Size = (uint)Marshal.SizeOf<TargetDeviceName>(),
+                        AdapterId = target.AdapterId,
+                        Id = target.Id,
+                    },
+                };
+
+                var friendly = DisplayConfigGetDeviceInfo(ref name) == 0 && !string.IsNullOrWhiteSpace(name.FriendlyName)
+                    ? name.FriendlyName.Trim()
+                    : "display";
+
+                body(target.AdapterId, target.Id, friendly);
+            }
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log($"display walk failed: {ex.Message}");
+        }
+    }
 
     private static string Technology(uint value) => value switch
     {

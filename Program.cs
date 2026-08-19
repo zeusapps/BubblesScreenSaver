@@ -53,6 +53,23 @@ internal static class Program
             return;
         }
 
+        // `--hdr on|off` switches HDR on every display that supports it. Only here so the
+        // blackout path can be set up and torn down when testing.
+        if (args.Length >= 2 && args[0] == "--hdr")
+        {
+            var wanted = args[1].Equals("on", StringComparison.OrdinalIgnoreCase);
+            Console.WriteLine("before:");
+            DisplayInfo.Describe().ForEach(Console.WriteLine);
+
+            foreach (var target in DisplayInfo.AllTargets())
+                DisplayInfo.SetHdr(target, wanted);
+
+            Thread.Sleep(2500);
+            Console.WriteLine("after:");
+            DisplayInfo.Describe().ForEach(Console.WriteLine);
+            return;
+        }
+
         // `--emission-demo` runs one Emission on demand, for previewing or testing.
         var demo = args.Length >= 1 && args[0] == "--emission-demo";
         App.EmissionDemo = demo;

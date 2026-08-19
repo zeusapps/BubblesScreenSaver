@@ -76,7 +76,9 @@ public sealed class TrayIcon : IDisposable
             ZoneOnly(Toggle("Animate artifacts (costs CPU)", s => s.Animated, (s, v) => s.Animated = v)),
             ZoneOnly(Toggle("Emission blackout", s => s.Emission, (s, v) => s.Emission = v)),
             ZoneOnly(Toggle("Lightning during an Emission", s => s.Lightning, (s, v) => s.Lightning = v)),
-            Toggle("Hide pointer when idle", s => s.HideCursor, (s, v) => s.HideCursor = v)));
+            Toggle("Hide pointer when idle", s => s.HideCursor, (s, v) => s.HideCursor = v),
+            Toggle("Dim monitor backlights when dark", s => s.DimMonitorBacklight, (s, v) => s.DimMonitorBacklight = v),
+            Toggle("Switch HDR off when dark", s => s.DisableHdrDuringBlackout, (s, v) => s.DisableHdrDuringBlackout = v)));
         menu.Items.Add(Submenu("Look",
             Item("More bubbles",  () => Tweak(s => s.BubbleCount += 4)),
             Item("Fewer bubbles", () => Tweak(s => s.BubbleCount -= 4)),

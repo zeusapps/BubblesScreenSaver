@@ -195,6 +195,7 @@ versus 151 MB.
 | `Emission` | true | Emission instead of a plain fade to black (Zone theme only) |
 | `Lightning` | true | lightning during an Emission (Zone theme only) |
 | `DimMonitorBacklight` | true | take external backlights to minimum over DDC/CI during blackout |
+| `DisableHdrDuringBlackout` | true | switch HDR off while dark so the backlight can be dimmed |
 | `MonitorStandby` | false | also ask external monitors to enter standby (darker, slower to wake) |
 | `AutoUpdate` | true | check for, download and stage new releases |
 | `UpdateCheckHours` | 24 | hours between update checks |
@@ -234,6 +235,26 @@ Bubbles.exe --dim-test
 lists every monitor by name, how it is connected, whether HDR is on, what backlight control it
 supports, and whether a change actually took.
 
+### HDR
+
+While HDR is on, Windows owns the luminance pipeline and the monitor's DDC/CI channel is dead:
+brightness *and* power-mode writes are accepted and silently discarded, and even
+`GetMonitorCapabilities` fails. Confirmed on an ASUS XG27WCS over DisplayPort, where every
+write returned success and changed nothing until HDR was switched off.
+
+So the blackout switches HDR off first, waits for the displays to re-sync, and only then
+touches the backlight. On the way back the order is reversed — **backlight restored first,
+then HDR** — because re-enabling HDR kills DDC again, and restoring the other way round would
+leave a monitor at zero brightness with no remaining way to reach it.
+
+This is a display **mode change**: expect a second of black and a re-sync at each end, and
+full-screen applications may not enjoy it. It only happens once the screen has already gone
+black and once again when you come back. `DisableHdrDuringBlackout: false` turns it off and
+leaves HDR alone, in which case an HDR monitor simply keeps glowing.
+
+Every step is written to disk *before* it happens, so a session that ends badly is undone on
+the next run. Verified by killing the process mid-blackout: HDR came back on the next launch.
+
 ### When a monitor ignores it
 
 **Many monitors accept DDC writes and quietly ignore them.** They return success and change
@@ -243,12 +264,7 @@ sits at full brightness.
 
 If yours ignores them, in rough order of likelihood:
 
-- **HDR is enabled.** This is by far the most common cause. While HDR is on, Windows owns the
-  luminance pipeline and the monitor's own brightness control is locked — DDC writes are
-  accepted and discarded. Turn it off in *Settings → System → Display →* pick the monitor *→
-  Use HDR*, then re-run `--dim-test`. Confirmed on an ASUS XG27WCS over DisplayPort: every
-  brightness and power-mode write returned success and changed nothing, with HDR the only
-  cause left standing.
+- **HDR is enabled** — see above; the app handles this itself unless you have turned that off.
 - a **dock, hub or KVM** in the path — these frequently block the DDC channel;
 - a **picture preset** (ASUS GameVisual, and equivalents) that locks brightness;
 - a vendor utility holding the channel — ASUS DisplayWidget Center, Armoury Crate, and friends;

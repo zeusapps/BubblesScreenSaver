@@ -69,6 +69,15 @@ public sealed class Settings
     /// including after a crash.</summary>
     public bool DimMonitorBacklight { get; set; } = true;
 
+    /// <summary>Switch HDR off during blackout, so the backlight can actually be dimmed.
+    ///
+    /// While HDR is on, Windows owns the luminance pipeline and the monitor's DDC/CI channel
+    /// is dead: brightness commands are accepted and discarded. Turning it off makes them work
+    /// again -- but it is a display mode change, so expect a second of black and a re-sync at
+    /// each end, and full-screen applications may not enjoy it. HDR is restored on wake, and
+    /// on the next run if this one ends badly.</summary>
+    public bool DisableHdrDuringBlackout { get; set; } = true;
+
     /// <summary>Also ask monitors to enter standby during blackout. Off by default: minimum
     /// backlight is nearly as dark and cannot leave a monitor asleep if something goes wrong.
     /// Some monitors take a second to come back, and a few want their power button.</summary>

@@ -14,7 +14,7 @@ public sealed class App : Application
     private IdleController? _idle;
     private TrayIcon? _tray;
     private Updater? _updater;
-    private MonitorBacklight? _backlight;
+    private DisplayBlackout? _displays;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -39,17 +39,13 @@ public sealed class App : Application
             }
         }
 
-        // Anything a previous run left dimmed goes back first.
-        _backlight = new MonitorBacklight();
-        _backlight.RecoverFromCrash();
+        // Anything a previous run left dimmed or with HDR off goes back first.
+        _displays = new DisplayBlackout(_settings);
+        _displays.RecoverFromCrash();
 
         _overlay = new OverlayWindow(_settings);
-        _overlay.WentDark += () =>
-        {
-            if (_settings.DimMonitorBacklight)
-                _backlight.Dim(_settings.MonitorStandby);
-        };
-        _overlay.LeftDark += () => _backlight.Restore();
+        _overlay.WentDark += () => _displays.Enter();
+        _overlay.LeftDark += () => _displays.Leave();
         _overlay.Show();                       // creates the HWND so the Win32 setup can run
         _overlay.HideBubbles(immediate: true); // ...then gets out of the way until you go idle
 
@@ -98,8 +94,8 @@ public sealed class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        // Never leave somebody with a dark monitor because this app went away.
-        _backlight?.Restore();
+        // Never leave somebody with a dark monitor, or HDR off, because this app went away.
+        _displays?.Leave();
 
         _idle?.Dispose();
         _updater?.Dispose();
