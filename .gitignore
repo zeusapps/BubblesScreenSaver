@@ -7,3 +7,6 @@ dist/
 *.user
 .vs/
 .idea/
+
+# local test publishes
+testinstall/

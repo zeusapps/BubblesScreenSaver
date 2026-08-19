@@ -24,14 +24,11 @@ internal sealed class Scope : FrameworkElement
     /// <summary>Blips as offsets from the detector, in field units.</summary>
     public List<(double DX, double DY, Anomaly Family, double Strength)> Blips { get; } = new();
 
-    /// <summary>The monitor edge, relative to the detector, in field units.</summary>
-    public Rect Monitor { get; set; } = new(-800, -500, 1600, 1000);
+    /// <summary>Pickup radius in field units -- drawn as the tight inner ring.</summary>
+    public double PickupRadius { get; set; } = 60;
 
-    /// <summary>Pickup radius in field units -- the innermost ring.</summary>
-    public double PickupRadius { get; set; } = 95;
-
-    /// <summary>Half-extents of the world the scope must always be able to show.</summary>
-    public Size HalfExtent { get; set; } = new(900, 560);
+    /// <summary>World distance represented by the outermost ring.</summary>
+    public double RangeWorld { get; set; } = 1200;
 
     private static Brush Freeze(Brush b)
     {
@@ -64,38 +61,40 @@ internal sealed class Scope : FrameworkElement
         dc.PushClip(new RectangleGeometry(new Rect(0, 0, w, h)));
 
         var centre = new Point(w / 2, h / 2);
+        var radius = Math.Min(w, h) / 2 - 4;
+        var scale = radius / Math.Max(1, RangeWorld);
 
-        // One scale for both axes, chosen so the whole monitor stays on the scope wherever
-        // the detector happens to be. Distances are therefore true in every direction.
-        var scale = Math.Min(
-            (w - 8) / (2 * Math.Max(1, HalfExtent.Width)),
-            (h - 8) / (2 * Math.Max(1, HalfExtent.Height)));
-
-        // The monitor edge, sliding about as the detector moves.
-        var monitor = new Rect(
-            centre.X + Monitor.X * scale,
-            centre.Y + Monitor.Y * scale,
-            Monitor.Width * scale,
-            Monitor.Height * scale);
-        dc.DrawRectangle(null, Tick, monitor);
-
-        // Range rings, the innermost being the pickup radius.
-        for (var i = 1; i <= 5; i++)
+        // Bearing spokes, every forty-five degrees.
+        for (var i = 0; i < 8; i++)
         {
-            var r = PickupRadius * scale * i * 1.9;
-            dc.DrawEllipse(null, i == 1 ? Axis : Arc, centre, r, r);
+            var a = i * Math.PI / 4;
+            dc.DrawLine(Arc, centre,
+                new Point(centre.X + Math.Cos(a) * radius, centre.Y + Math.Sin(a) * radius));
         }
 
-        // The operator: fixed, dead centre.
-        dc.DrawLine(Axis, new Point(centre.X - 7, centre.Y), new Point(centre.X + 7, centre.Y));
-        dc.DrawLine(Axis, new Point(centre.X, centre.Y - 7), new Point(centre.X, centre.Y + 7));
-
-        for (var i = 1; i < 8; i++)
+        // Range rings, evenly spaced out to the edge of the scope.
+        for (var i = 1; i <= 5; i++)
         {
-            var x = 4 + (w - 8) * i / 8.0;
-            dc.DrawLine(Tick, new Point(x, h - 4), new Point(x, h - 7));
-            var y = 4 + (h - 8) * i / 8.0;
-            dc.DrawLine(Tick, new Point(4, y), new Point(7, y));
+            var r = radius * i / 5.0;
+            dc.DrawEllipse(null, i == 5 ? Axis : Arc, centre, r, r);
+        }
+
+        // The pickup radius: cross this and the artifact is collected.
+        var pickup = PickupRadius * scale;
+        if (pickup > 2) dc.DrawEllipse(null, Axis, centre, pickup, pickup);
+
+        // The operator, dead centre and staying there.
+        dc.DrawLine(Axis, new Point(centre.X - 6, centre.Y), new Point(centre.X + 6, centre.Y));
+        dc.DrawLine(Axis, new Point(centre.X, centre.Y - 6), new Point(centre.X, centre.Y + 6));
+
+        // Edge ticks, so the graticule reads as an instrument rather than a target.
+        for (var i = 0; i < 12; i++)
+        {
+            var a = i * Math.PI / 6;
+            var inner = radius * (i % 3 == 0 ? 0.9 : 0.95);
+            dc.DrawLine(Tick,
+                new Point(centre.X + Math.Cos(a) * inner, centre.Y + Math.Sin(a) * inner),
+                new Point(centre.X + Math.Cos(a) * radius, centre.Y + Math.Sin(a) * radius));
         }
 
         foreach (var (dx, dy, family, strength) in Blips)
@@ -303,7 +302,7 @@ public sealed class Detector : Border
 
     private FrameworkElement BuildBody()
     {
-        var controls = new Grid { Margin = new Thickness(9) };
+        var controls = new Grid { Margin = new Thickness(7) };
         controls.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         controls.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -331,10 +330,10 @@ public sealed class Detector : Border
 
         left.Children.Add(new Border
         {
-            Width = 46,
-            Height = 26,
-            Margin = new Thickness(2, 9, 0, 0),
-            CornerRadius = new CornerRadius(12),
+            Width = 40,
+            Height = 22,
+            Margin = new Thickness(2, 8, 0, 0),
+            CornerRadius = new CornerRadius(10),
             Background = Ribs(false, Color.FromRgb(0x2C, 0x30, 0x34), Color.FromRgb(0x10, 0x12, 0x14)),
             HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
         });
@@ -373,7 +372,7 @@ public sealed class Detector : Border
                 Text = label,
                 FontFamily = Mono,
                 FontSize = 7,
-                Width = 32,
+                Width = 28,
                 TextAlignment = TextAlignment.Right,
                 Foreground = new SolidColorBrush(Label),
                 VerticalAlignment = System.Windows.VerticalAlignment.Center,
@@ -382,7 +381,7 @@ public sealed class Detector : Border
 
             var key = new Border
             {
-                Width = 40,
+                Width = 32,
                 Height = 12,
                 CornerRadius = new CornerRadius(2),
                 Background = KeyBrush(lit: false),
@@ -432,8 +431,10 @@ public sealed class Detector : Border
 
         return new Border
         {
-            Margin = new Thickness(4, 3, 4, 0),
-            CornerRadius = new CornerRadius(12, 12, 18, 18),
+            // Narrower than the screen housing above it, the way the real case steps in
+            // below the hinge.
+            Margin = new Thickness(26, 3, 26, 0),
+            CornerRadius = new CornerRadius(10, 10, 16, 16),
             Background = Metal(),
             BorderBrush = new SolidColorBrush(Color.FromRgb(0x3C, 0x46, 0x50)),
             BorderThickness = new Thickness(1),
@@ -456,8 +457,8 @@ public sealed class Detector : Border
     {
         var pad = new Grid
         {
-            Width = 48,
-            Height = 48,
+            Width = 42,
+            Height = 42,
             Margin = new Thickness(2, 0, 0, 0),
             HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
         };
@@ -706,11 +707,10 @@ public sealed class Detector : Border
 
         _scope.Blips.Clear();
         _scope.PickupRadius = field.CollectRadius;
-        _scope.Monitor = new Rect(screen.Left - here.X, screen.Top - here.Y, width, height);
 
-        // Half-extents big enough that the whole monitor stays on the scope even with the
-        // detector pinned against a corner.
-        _scope.HalfExtent = new Size(width * 0.95, height * 0.95);
+        // The outer ring reaches most of the way across the monitor, so nearly everything on
+        // screen has a blip while the ones nearby still have room to read against.
+        _scope.RangeWorld = Math.Sqrt(width * width + height * height) * 0.8;
 
         var raw = 0.0;
         var nearestDistance = double.MaxValue;

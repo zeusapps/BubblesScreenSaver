@@ -92,7 +92,5 @@ internal static class Program
                 singleInstance.ReleaseMutex();
             }
         }
-
-        Updater.RelaunchIfSwapped();
     }
 }

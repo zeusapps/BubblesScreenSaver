@@ -229,9 +229,12 @@ public sealed class Updater : IDisposable
         }
     }
 
-    /// <summary>Swaps the staged binary in. Does *not* start anything -- the caller relaunches
-    /// once the single-instance mutex has been released, otherwise the new process would find
-    /// the old one still holding it and quietly exit.</summary>
+    /// <summary>Swaps the staged binary in and starts it.
+    ///
+    /// The replacement is launched here rather than after Application.Run returns, because on
+    /// the shutdown path that code is never reached -- the process ends first, and the update
+    /// silently left nothing running. The new process waits for the single-instance mutex, so
+    /// starting it while this one is still finishing is fine.</summary>
     public bool SwapIn()
     {
         if (Staged is null || !CanSelfUpdate) return false;
@@ -264,6 +267,19 @@ public sealed class Updater : IDisposable
             Diagnostics.Log($"update applied: now v{Staged}");
             Staged = null;
             RestartWanted = true;
+
+            try
+            {
+                var started = Process.Start(new ProcessStartInfo(current) { UseShellExecute = true });
+                Diagnostics.Log(started is null
+                    ? "replacement produced no process"
+                    : $"replacement started as pid {started.Id}");
+            }
+            catch (Exception ex)
+            {
+                Diagnostics.Log($"replacement could not be started: {ex.Message}");
+            }
+
             return true;
         }
         catch (Exception ex)
@@ -288,23 +304,6 @@ public sealed class Updater : IDisposable
         catch
         {
             // It is only litter; it will go on the next run.
-        }
-    }
-
-    /// <summary>Relaunches the freshly swapped binary. Call once the mutex is gone.</summary>
-    public static void RelaunchIfSwapped()
-    {
-        if (!RestartWanted) return;
-
-        try
-        {
-            var exe = Environment.ProcessPath;
-            if (!string.IsNullOrEmpty(exe))
-                Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            Diagnostics.Log($"relaunch failed: {ex.Message}");
         }
     }
 
