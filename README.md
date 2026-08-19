@@ -99,9 +99,23 @@ to roughly one pickup every six seconds. `CollectRadius: 0` switches it off.
 
 ![Three moments of an Emission: buildup, wavefront, dark](docs/images/emission.png)
 
-The blackout stage is an Emission. The sky burns crimson, the artifacts go frantic, a
-wavefront washes over everything, and then the Zone is dark. It still ends on solid black,
-which on an OLED panel means genuinely unlit pixels.
+The blackout stage is an Emission. The sky burns crimson, **lightning strikes across it**, the
+artifacts go frantic, a wavefront washes over everything, and then the Zone is dark. It still
+ends on solid black, which on an OLED panel means genuinely unlit pixels.
+
+![Successive frames of one lightning strike](docs/images/lightning.png)
+
+Strikes are scheduled from the time into the Emission — sparse at first, crowding as the
+pressure builds, finished before the sky collapses. Each one flickers three times and forks
+once. They are drawn behind the artifacts, so those silhouette against the flash, and the layer
+is only redrawn while a bolt is actually on screen. `Lightning: false` turns them off.
+
+```
+Bubbles.exe --emission-demo
+```
+
+runs a single Emission on demand and quits, which is the only sane way to look at one: waiting
+for a real ten-minute idle works, but any stray mouse movement cancels it.
 
 ---
 
@@ -179,6 +193,7 @@ versus 151 MB.
 | `CollectRadius` | 60 | how close an artifact must drift to be collected; `0` disables |
 | `ShowDetector` | true | the hunting VELES detector (Zone theme only) |
 | `Emission` | true | Emission instead of a plain fade to black (Zone theme only) |
+| `Lightning` | true | lightning during an Emission (Zone theme only) |
 | `DimMonitorBacklight` | true | take external backlights to minimum over DDC/CI during blackout |
 | `MonitorStandby` | false | also ask external monitors to enter standby (darker, slower to wake) |
 | `AutoUpdate` | true | check for, download and stage new releases |

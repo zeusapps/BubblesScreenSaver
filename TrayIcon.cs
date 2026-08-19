@@ -75,6 +75,7 @@ public sealed class TrayIcon : IDisposable
             ZoneOnly(Toggle("Veles artifact detector", s => s.ShowDetector, (s, v) => s.ShowDetector = v)),
             ZoneOnly(Toggle("Animate artifacts (costs CPU)", s => s.Animated, (s, v) => s.Animated = v)),
             ZoneOnly(Toggle("Emission blackout", s => s.Emission, (s, v) => s.Emission = v)),
+            ZoneOnly(Toggle("Lightning during an Emission", s => s.Lightning, (s, v) => s.Lightning = v)),
             Toggle("Hide pointer when idle", s => s.HideCursor, (s, v) => s.HideCursor = v)));
         menu.Items.Add(Submenu("Look",
             Item("More bubbles",  () => Tweak(s => s.BubbleCount += 4)),

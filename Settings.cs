@@ -102,6 +102,10 @@ public sealed class Settings
     /// <summary>Show the drifting Veres artifact detector. Zone theme only.</summary>
     public bool ShowDetector { get; set; } = true;
 
+    /// <summary>Lightning across the sky during an Emission. Zone theme only, and only while
+    /// the Emission itself is running -- nothing is drawn once the screen is black.</summary>
+    public bool Lightning { get; set; } = true;
+
     /// <summary>Make the blackout an Emission -- red sky, agitated artifacts, shockwave --
     /// instead of a plain fade. Zone theme only; either way it ends at pure black.</summary>
     public bool Emission { get; set; } = true;

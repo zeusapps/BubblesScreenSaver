@@ -20,6 +20,7 @@ internal static class Export
         Save(EmissionStrip(), Path.Combine(directory, "emission.png"));
         Save(MotionStrip(), Path.Combine(directory, "motion.png"));
         Save(HeroShot(), Path.Combine(directory, "hero.png"));
+        Save(LightningStrip(), Path.Combine(directory, "lightning.png"));
     }
 
     // ---- the ten artifacts, on the sort of dark ground they'll actually sit on ----------
@@ -88,14 +89,15 @@ internal static class Export
     {
         var strip = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
 
-        strip.Children.Add(Moment("buildup", scrim: 0.86, sky: 0.94, flash: 0.00, artifacts: 1.00));
-        strip.Children.Add(Moment("wavefront", scrim: 0.86, sky: 0.86, flash: 0.85, artifacts: 1.00));
-        strip.Children.Add(Moment("dark", scrim: 1.00, sky: 0.00, flash: 0.00, artifacts: 0.00));
+        strip.Children.Add(Moment("buildup", scrim: 0.86, sky: 0.94, flash: 0.00, artifacts: 1.00, bolt: 5.4));
+        strip.Children.Add(Moment("wavefront", scrim: 0.86, sky: 0.86, flash: 0.85, artifacts: 1.00, bolt: 0));
+        strip.Children.Add(Moment("dark", scrim: 1.00, sky: 0.00, flash: 0.00, artifacts: 0.00, bolt: 0));
 
         return strip;
     }
 
-    private static FrameworkElement Moment(string label, double scrim, double sky, double flash, double artifacts)
+    private static FrameworkElement Moment(string label, double scrim, double sky, double flash,
+        double artifacts, double bolt)
     {
         const double w = 460, h = 300;
         var layers = new Grid { Width = w, Height = h };
@@ -105,6 +107,8 @@ internal static class Export
         layers.Children.Add(new Rectangle { Fill = Brushes.Black, Opacity = scrim });
 
         layers.Children.Add(new Rectangle { Fill = OverlayWindow.EmissionSkyBrush(), Opacity = sky });
+
+        if (bolt > 0) layers.Children.Add(new LightningLayer { Time = bolt });
 
         var canvas = new Canvas { Opacity = artifacts, ClipToBounds = true };
         var rng = new Random(3);
@@ -261,6 +265,35 @@ internal static class Export
         Window(70, 60, 780, 520, 12);
         Window(900, 130, 620, 640, 15);
         return canvas;
+    }
+
+    /// <summary>The sky at successive moments of a strike, with nothing else in the way.</summary>
+    private static FrameworkElement LightningStrip()
+    {
+        var strip = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        double[] moments = { 0.92, 1.00, 1.08, 1.16, 1.24, 1.32 };
+
+        foreach (var moment in moments)
+        {
+            var layers = new Grid { Width = 300, Height = 260 };
+            layers.Children.Add(new Rectangle { Fill = Brushes.Black });
+            layers.Children.Add(new Rectangle { Fill = OverlayWindow.EmissionSkyBrush(), Opacity = 0.9 });
+            layers.Children.Add(new LightningLayer { Time = moment });
+            layers.Children.Add(new TextBlock
+            {
+                Text = $"t+{moment:F2}s",
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Color.FromArgb(0xC0, 0xFF, 0xFF, 0xFF)),
+                VerticalAlignment = System.Windows.VerticalAlignment.Bottom,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 6),
+            });
+
+            strip.Children.Add(new Border { Child = layers, Margin = new Thickness(3) });
+        }
+
+        return strip;
     }
 
     private static Brush MockDesktop()

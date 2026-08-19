@@ -4,6 +4,11 @@ namespace Bubbles;
 
 public sealed class App : Application
 {
+    /// <summary>Set by --emission-demo: run one Emission straight away and quit, ignoring the
+    /// idle timer entirely. Waiting for a real idle period makes the Emission almost impossible
+    /// to test, since any stray mouse movement cancels it.</summary>
+    public static bool EmissionDemo { get; set; }
+
     private Settings _settings = new();
     private OverlayWindow? _overlay;
     private IdleController? _idle;
@@ -50,7 +55,45 @@ public sealed class App : Application
 
         _idle = new IdleController(_settings, _overlay);
         _tray = new TrayIcon(_settings, _overlay, _idle, _updater, Shutdown);
+
+        if (EmissionDemo)
+        {
+            RunEmissionDemo();
+            return;
+        }
+
         _idle.Start();
+    }
+
+    /// <summary>Shows the artifacts, runs one Emission, then quits. The idle controller is
+    /// never started, so nothing the user does interrupts it.</summary>
+    private void RunEmissionDemo()
+    {
+        if (_overlay is null) return;
+
+        _overlay.ShowBubbles();
+
+        var toEmission = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(2.5),
+        };
+        toEmission.Tick += (_, _) =>
+        {
+            toEmission.Stop();
+            _overlay.SetBlackout(true);
+        };
+        toEmission.Start();
+
+        var toExit = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(24),
+        };
+        toExit.Tick += (_, _) =>
+        {
+            toExit.Stop();
+            Shutdown();
+        };
+        toExit.Start();
     }
 
     protected override void OnExit(ExitEventArgs e)

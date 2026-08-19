@@ -35,6 +35,7 @@ public sealed class OverlayWindow : Window
     private readonly Canvas _canvas = new() { ClipToBounds = false };
     private readonly Rectangle _emission = new() { Opacity = 0, IsHitTestVisible = false };
     private readonly Rectangle _flash = new() { Opacity = 0, IsHitTestVisible = false };
+    private readonly LightningLayer _lightning = new() { Opacity = 0, IsHitTestVisible = false };
     private readonly Canvas _detectorLayer = new() { ClipToBounds = false, Opacity = 0 };
     private readonly Detector _detector = new();
     private Rect _detectorScreen = new(0, 0, 1920, 1080);
@@ -53,6 +54,7 @@ public sealed class OverlayWindow : Window
     private bool _blackout;
     private bool _emitting;
     private double _emissionTime;
+    private bool _lightningDrawn;
     private double _animationTime;
     private int _frameCounter;
     private double _pixelsPerDip = 1;
@@ -137,6 +139,10 @@ public sealed class OverlayWindow : Window
         // than being washed flat by it.
         _root.Children.Add(_scrim);
         _root.Children.Add(_emission);
+
+        // Lightning belongs to the sky, so it sits behind the artifacts and silhouettes them.
+        _root.Children.Add(_lightning);
+
         _root.Children.Add(_canvas);
         _root.Children.Add(_flash);
         _detectorLayer.Children.Add(_detector);
@@ -307,6 +313,10 @@ public sealed class OverlayWindow : Window
     {
         _emitting = true;
         _emissionTime = 0;
+        _lightningDrawn = false;
+
+        _lightning.BeginAnimation(UIElement.OpacityProperty, null);
+        _lightning.Opacity = _settings.Lightning ? 1 : 0;
 
         var pda = DetectorWanted ? 1.0 : 0.0;
 
@@ -332,6 +342,7 @@ public sealed class OverlayWindow : Window
     {
         if (!_blackout) return;
 
+        HideLightning();
         _emitting = false;
         _emissionTime = 0;
         _field.Agitation = 1;
@@ -342,6 +353,7 @@ public sealed class OverlayWindow : Window
     private void EndBlackout()
     {
         LeftDark?.Invoke();
+        HideLightning();
         _emitting = false;
         _emissionTime = 0;
         _field.Agitation = 1;
@@ -354,6 +366,13 @@ public sealed class OverlayWindow : Window
         Animate(_emission, 0, 0.25);
         Animate(_flash, 0, 0.25);
         Animate(_detectorLayer, DetectorWanted ? 1 : 0, 0.25);
+    }
+
+    private void HideLightning()
+    {
+        _lightning.BeginAnimation(UIElement.OpacityProperty, null);
+        _lightning.Opacity = 0;
+        _lightningDrawn = false;
     }
 
     /// <summary>How hard the Zone is shaking at this point in the Emission.</summary>
@@ -613,6 +632,20 @@ public sealed class OverlayWindow : Window
         {
             _emissionTime += step;
             _field.Agitation = EmissionAgitation(_emissionTime);
+
+            if (_settings.Lightning)
+            {
+                // Only redraw while a bolt is actually on screen, plus the one frame after the
+                // last one dies so the sky is left clean.
+                var striking = _lightning.HasStrike(_emissionTime);
+
+                if (striking || _lightningDrawn)
+                {
+                    _lightning.Time = _emissionTime;
+                    _lightning.InvalidateVisual();
+                    _lightningDrawn = striking;
+                }
+            }
         }
 
         _field.Update(step);

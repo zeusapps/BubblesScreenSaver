@@ -53,6 +53,10 @@ internal static class Program
             return;
         }
 
+        // `--emission-demo` runs one Emission on demand, for previewing or testing.
+        var demo = args.Length >= 1 && args[0] == "--emission-demo";
+        App.EmissionDemo = demo;
+
         Updater.SweepOldBinaries();
 
         // One overlay is plenty. The wait matters: after an update the outgoing process is
