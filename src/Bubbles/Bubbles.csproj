@@ -38,7 +38,7 @@
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
-    <PublishDir>dist\</PublishDir>
+    <PublishDir>$(MSBuildThisFileDirectory)..\..\dist\</PublishDir>
     <DebugType>none</DebugType>
   </PropertyGroup>
 
