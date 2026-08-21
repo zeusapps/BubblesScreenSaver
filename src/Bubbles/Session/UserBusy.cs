@@ -1,6 +1,8 @@
 using Microsoft.Win32;
 using System.Runtime.InteropServices;
 
+using Bubbles.Interop;
+
 namespace Bubbles.Session;
 
 /// <summary>Works out whether somebody is busy despite not touching the keyboard.
@@ -51,6 +53,11 @@ internal static class UserBusy
 
     private static string? Evaluate(Settings settings)
     {
+        // First, and with no setting to turn it off. There is no arrangement in which drawing
+        // a screensaver onto a screen the user cannot see is the right thing to do, and the
+        // blackout behind it would dim monitors under a sign-in prompt it cannot draw over.
+        if (SessionState.Locked) return "the session is locked";
+
         if (settings.PauseWhileMicrophoneInUse && DeviceInUse("microphone", out var micApp))
             return $"microphone in use by {micApp}";
 

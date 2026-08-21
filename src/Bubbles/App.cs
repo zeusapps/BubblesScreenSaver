@@ -30,6 +30,9 @@ public sealed class App : Application
 
         _settings = Settings.Load();
 
+        // Subscribe before anything can ask, so a lock is never missed.
+        SessionState.Watch();
+
         _updater = new Updater(_settings);
 
         // A download staged since last time is swapped in now, before anything is on screen,
@@ -67,22 +70,13 @@ public sealed class App : Application
             // and the lock screen is the one thing this app cannot draw over to explain itself.
             _displays.Leave();
 
-            if (reachedBlack && _settings.LockAfterBlackout) SessionLock.Request();
+            // Not if it is already locked: this same path runs when a lock arriving by any
+            // other route stands the blackout down, and asking again would be noise.
+            if (reachedBlack && _settings.LockAfterBlackout && !SessionState.Locked)
+                SessionLock.Request();
             reachedBlack = false;
         };
 
-        // If the session locks by any other route -- Win+L, a policy, the lid -- the blackout
-        // is over whether this app likes it or not: the lock screen is what is on display, and
-        // input to it happens on the secure desktop where the idle timer cannot see it. Left
-        // alone, a monitor dimmed over DDC/CI would stay dimmed with a sign-in prompt on it
-        // that nobody can read. So stand down and put the displays back.
-        Microsoft.Win32.SystemEvents.SessionSwitch += (_, e) =>
-        {
-            if (e.Reason != Microsoft.Win32.SessionSwitchReason.SessionLock) return;
-
-            _displays.Leave();
-            reachedBlack = false;
-        };
         _overlay.Show();                       // creates the HWND so the Win32 setup can run
         _overlay.HideBubbles(immediate: true); // ...then gets out of the way until you go idle
 
