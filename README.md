@@ -81,7 +81,9 @@ Asking for an Emission from the tray still works while held off; if you ask for 
 
 ## Asking for a PIN
 
-Off by default. Tray → *Ask for a PIN after the black screen*, or `"LockAfterBlackout": true`.
+Off by default. Tray → *Ask for a PIN* → *After the black screen*, or
+`"LockAfterBlackout": true`. The tray entry carries its current state in its own label, so
+the menu says which it is without being opened.
 
 With it on, the session locks once the screen has actually reached black, so coming back needs
 whatever already unlocks the machine — PIN, password or Windows Hello.

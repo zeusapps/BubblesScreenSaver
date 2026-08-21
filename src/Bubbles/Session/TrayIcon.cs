@@ -20,6 +20,7 @@ public sealed class TrayIcon : IDisposable
     private readonly ToolStripMenuItem _pause;
     private readonly ToolStripMenuItem _alwaysOn;
     private readonly ToolStripMenuItem _startup;
+    private readonly ToolStripMenuItem _pin;
     private readonly List<(ToolStripMenuItem Item, Func<Settings, bool> IsCurrent)> _checks = new();
     private Settings _settings;
 
@@ -69,8 +70,14 @@ public sealed class TrayIcon : IDisposable
             Choice("Half",        s => s.Dim = 0.55, s => Near(s.Dim, 0.55)),
             Choice("A lot",       s => s.Dim = 0.80, s => Near(s.Dim, 0.80)),
             Choice("Almost black", s => s.Dim = 0.95, s => Near(s.Dim, 0.95))));
-        menu.Items.Add(Toggle("Ask for a PIN after the black screen",
-            s => s.LockAfterBlackout, (s, v) => s.LockAfterBlackout = v));
+        // Two explicit choices rather than a checkbox. A lone checkable entry reads as a
+        // command -- "ask for a PIN" sounds like something you are about to do -- and an
+        // absent tick looks exactly like a tick you failed to notice. With a pair, one is
+        // always ticked, and the label says which without opening anything.
+        _pin = Submenu("Ask for a PIN",
+            Choice("Never", s => s.LockAfterBlackout = false, s => !s.LockAfterBlackout),
+            Choice("After the black screen", s => s.LockAfterBlackout = true, s => s.LockAfterBlackout));
+        menu.Items.Add(_pin);
         menu.Items.Add(Submenu("Hold off while",
             Toggle("The microphone is in use", s => s.PauseWhileMicrophoneInUse, (s, v) => s.PauseWhileMicrophoneInUse = v),
             Toggle("The camera is in use", s => s.PauseWhileCameraInUse, (s, v) => s.PauseWhileCameraInUse = v),
@@ -195,6 +202,11 @@ public sealed class TrayIcon : IDisposable
             item.Checked = isCurrent(_settings);
         _alwaysOn.Checked = _settings.AlwaysOn;
         _startup.Checked = Startup.IsEnabled;
+
+        // Say it on the face of the menu, not only on the tick inside.
+        _pin.Text = _settings.LockAfterBlackout
+            ? "Ask for a PIN:  after the black screen"
+            : "Ask for a PIN:  never";
         RefreshUpdateItem();
 
         // Artifacts, the detector and Emissions are all Zone furniture; greying them out is
