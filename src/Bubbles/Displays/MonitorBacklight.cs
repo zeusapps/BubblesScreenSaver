@@ -28,6 +28,7 @@ namespace Bubbles.Displays;
 public sealed class MonitorBacklight
 {
     private const uint PowerModeVcp = 0xD6;
+    private const uint InputSourceVcp = 0x60;
     private const uint PowerOn = 1;
     private const uint PowerStandby = 4;
 
@@ -62,6 +63,10 @@ public sealed class MonitorBacklight
 
     [DllImport("dxva2.dll", SetLastError = true)]
     private static extern bool SetVCPFeature(IntPtr monitor, byte code, uint value);
+
+    [DllImport("dxva2.dll", SetLastError = true)]
+    private static extern bool GetVCPFeatureAndVCPFeatureReply(
+        IntPtr monitor, byte code, IntPtr type, out uint current, out uint maximum);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct MonitorInfoEx
@@ -201,6 +206,67 @@ public sealed class MonitorBacklight
 
         Diagnostics.Log($"dimmed {accepted.Count} external monitor(s)" + (alsoStandby ? " and asked for standby" : ""));
     }
+
+    /// <summary>What each monitor says it is currently displaying, and whether it will say.
+    ///
+    /// A monitor has one backlight but several inputs, and a brightness command sent over an
+    /// input that is not on screen still dims the panel. So a machine can dim a monitor that
+    /// is showing a different computer entirely -- which is exactly what happens with two
+    /// laptops plugged into one screen. Windows cannot see this: the display is still attached
+    /// and still part of the desktop, so only the monitor knows.
+    ///
+    /// VCP 0x60 is the input-source code. The low byte is what MCCS defines; the values above
+    /// 0x12 are vendor territory, which is where USB-C usually lands, so this reports the raw
+    /// number alongside any name it recognises rather than pretending to be certain.</summary>
+    public List<string> ReadInputs()
+    {
+        var readings = new List<string>();
+
+        ForEachMonitor((handle, device, description) =>
+        {
+            var input = ReadVcp(handle, InputSourceVcp);
+            var power = ReadVcp(handle, PowerModeVcp);
+
+            readings.Add($"  {device}  {description.Trim()}: " +
+                         $"input {Describe(input, InputName)}, power {Describe(power, PowerName)}");
+        });
+
+        return readings;
+    }
+
+    private static uint? ReadVcp(IntPtr monitor, uint code) =>
+        GetVCPFeatureAndVCPFeatureReply(monitor, (byte)code, IntPtr.Zero, out var current, out _)
+            ? current
+            : null;
+
+    private static string Describe(uint? value, Func<uint, string?> name) =>
+        value is not { } raw
+            ? "not reported"
+            : name(raw) is { } known
+                ? $"0x{raw:X2} ({known})"
+                : $"0x{raw:X2}";
+
+    private static string? InputName(uint value) => (value & 0xFF) switch
+    {
+        0x01 => "VGA-1",
+        0x03 => "DVI-1",
+        0x04 => "DVI-2",
+        0x0F => "DisplayPort-1",
+        0x10 => "DisplayPort-2",
+        0x11 => "HDMI-1",
+        0x12 => "HDMI-2",
+        _ => null, // vendor-defined, which is where USB-C normally sits
+    };
+
+    private static string? PowerName(uint value) => value switch
+    {
+        1 => "on",
+        2 => "standby",
+        3 => "suspend",
+        4 => "off",
+        5 => "hard off",
+        _ => null,
+    };
 
     /// <summary>Puts every monitor to full brightness without touching the record, standing in
     /// for a monitor that has raised its own backlight. Only for --hold-test: it makes the

@@ -97,6 +97,20 @@ internal static class Program
             return;
         }
 
+        // `--inputs` reports which source each monitor is actually showing. Read-only: it sends
+        // no writes at all, so it is safe to run against a live instance and safe to run while
+        // another machine is driving the screen.
+        if (args.Length >= 1 && args[0] == "--inputs")
+        {
+            Console.WriteLine("displays, as Windows sees them:");
+            DisplayInfo.Describe().ForEach(Console.WriteLine);
+            Console.WriteLine();
+            Console.WriteLine("monitors, as they describe themselves over DDC/CI:");
+            new MonitorBacklight(Path.Combine(Path.GetTempPath(), "bubbles-inputs.json"))
+                .ReadInputs().ForEach(Console.WriteLine);
+            return;
+        }
+
         // `--hold-test` checks that a blackout survives a monitor putting its own backlight
         // back up, which is a thing monitors do: dim, shove the brightness back to maximum the
         // way the panel would, and see whether the hold notices and undoes it.
