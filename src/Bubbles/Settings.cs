@@ -54,6 +54,11 @@ public sealed class Settings
     /// a game, a slideshow, or anything that has asked Windows not to be interrupted.</summary>
     public bool PauseInFullScreen { get; set; } = true;
 
+    /// <summary>Stay out of the way while sound is playing. Watching a video produces no
+    /// keyboard or mouse input either, and a video in a window is not fullscreen at all, so
+    /// this is the only thing that catches it.</summary>
+    public bool PauseWhileAudioPlaying { get; set; } = true;
+
     // ---- idle behaviour -------------------------------------------------------------
 
     /// <summary>Seconds of no keyboard/mouse input before the bubbles fade in.

@@ -1,6 +1,7 @@
 using System.IO;
 
 using Bubbles.Displays;
+using Bubbles.Interop;
 using Bubbles.Session;
 
 namespace Bubbles;
@@ -97,6 +98,25 @@ internal static class Program
             return;
         }
 
+        // `--audio` samples the output level for a few seconds. Silence must read as a flat
+        // zero: an endpoint that idles at a trickle of noise would hold the screensaver off
+        // permanently, which is the one failure this check must not have.
+        if (args.Length >= 1 && args[0] == "--audio")
+        {
+            Console.WriteLine($"silence threshold: {SoundWatch.Silence}");
+
+            for (var i = 0; i < 20; i++)
+            {
+                var peak = AudioActivity.Peak();
+                Console.WriteLine(peak is { } level
+                    ? $"  peak {level:F4}  {(level > SoundWatch.Silence ? "PLAYING" : "silent")}"
+                    : "  no reading (no output device?)");
+                Thread.Sleep(500);
+            }
+
+            return;
+        }
+
         // `--inputs` reports which source each monitor is actually showing. Read-only: it sends
         // no writes at all, so it is safe to run against a live instance and safe to run while
         // another machine is driving the screen.
@@ -167,6 +187,9 @@ internal static class Program
         if (args.Length >= 1 && args[0] == "--busy")
         {
             var settings = Settings.Load();
+            Console.WriteLine(UserBusy.DescribeForeground());
+            Console.WriteLine();
+
             var reason = UserBusy.Reason(settings);
             Console.WriteLine(reason is null
                 ? "nothing is holding the screensaver off right now"

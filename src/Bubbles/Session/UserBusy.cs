@@ -42,6 +42,38 @@ internal static class UserBusy
     [DllImport("shell32.dll")]
     private static extern int SHQueryUserNotificationState(out NotificationState state);
 
+    private const int MonitorDefaultToNearest = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowRect
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo
+    {
+        public int Size;
+        public WindowRect Monitor;
+        public WindowRect Work;
+        public uint Flags;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr window, out WindowRect bounds);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr window, int flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool GetMonitorInfoW(IntPtr monitor, ref MonitorInfo info);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassNameW(IntPtr window, System.Text.StringBuilder name, int count);
+
     /// <summary>Why the overlay is holding off, or null if it need not.</summary>
     public static string? Reason(Settings settings)
     {
@@ -67,7 +99,111 @@ internal static class UserBusy
         if (settings.PauseInFullScreen && FullScreen(out var state))
             return $"a full-screen or presenting application is running ({state})";
 
+        if (settings.PauseInFullScreen && FillsAScreen(out var window))
+            return $"a window is filling the screen ({window})";
+
+        if (settings.PauseWhileAudioPlaying &&
+            Sound.Playing(AudioActivity.Peak(), Environment.TickCount64))
+        {
+            return "sound is playing";
+        }
+
         return null;
+    }
+
+    private static readonly SoundWatch Sound = new();
+
+    /// <summary>Whether a window's bounds are a monitor's bounds, give or take a pixel.
+    ///
+    /// Equality on all four edges, deliberately, rather than "covers at least". A maximised
+    /// window is not fullscreen and must not read as one -- holding off for any maximised
+    /// window is the QUNS_BUSY mistake, which would keep the screensaver from ever running.
+    ///
+    /// The tempting test is whether the window stops short of the bottom, leaving room for the
+    /// taskbar. That works right up until somebody hides their taskbar, at which point the work
+    /// area becomes the whole monitor and every maximised window looks fullscreen. Equality
+    /// does not care: a maximised window overshoots its monitor by the width of its invisible
+    /// resize border, and a fullscreen one lands exactly on it.</summary>
+    internal static bool FillsMonitor(
+        int windowLeft, int windowTop, int windowRight, int windowBottom,
+        int monitorLeft, int monitorTop, int monitorRight, int monitorBottom)
+    {
+        const int Slack = 2;
+
+        return Math.Abs(windowLeft - monitorLeft) <= Slack &&
+               Math.Abs(windowTop - monitorTop) <= Slack &&
+               Math.Abs(windowRight - monitorRight) <= Slack &&
+               Math.Abs(windowBottom - monitorBottom) <= Slack;
+    }
+
+    /// <summary>The foreground window and how it measures up against its monitor, so the
+    /// fullscreen decision can be inspected rather than guessed at. A maximised window must
+    /// come out as *not* filling the screen, or this repeats the QUNS_BUSY mistake.</summary>
+    internal static string DescribeForeground()
+    {
+        var window = GetForegroundWindow();
+        if (window == IntPtr.Zero) return "  no foreground window";
+
+        var className = new System.Text.StringBuilder(256);
+        GetClassNameW(window, className, className.Capacity);
+
+        if (!GetWindowRect(window, out var bounds)) return $"  {className}: no rect";
+
+        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+        GetMonitorInfoW(MonitorFromWindow(window, MonitorDefaultToNearest), ref info);
+
+        var fills = FillsAScreen(out _);
+
+        return string.Join(Environment.NewLine,
+            $"  class      {className}",
+            $"  window     {bounds.Left},{bounds.Top} to {bounds.Right},{bounds.Bottom}",
+            $"  monitor    {info.Monitor.Left},{info.Monitor.Top} to {info.Monitor.Right},{info.Monitor.Bottom}",
+            $"  work area  {info.Work.Left},{info.Work.Top} to {info.Work.Right},{info.Work.Bottom}",
+            $"  fills the screen: {fills}");
+    }
+
+    /// <summary>Whether the foreground window covers a whole monitor.
+    ///
+    /// SHQueryUserNotificationState only reports FullScreenDirect3D for a browser playing video
+    /// intermittently, and never for a window that merely fills the screen, so geometry is the
+    /// more dependable question. A *maximised* window is not this: it stops at the work area
+    /// and leaves the taskbar showing, whereas fullscreen covers the monitor entirely -- which
+    /// is what makes this usable where QUNS_BUSY was not.</summary>
+    private static bool FillsAScreen(out string what)
+    {
+        what = string.Empty;
+
+        try
+        {
+            var window = GetForegroundWindow();
+            if (window == IntPtr.Zero) return false;
+
+            // The desktop is always "fullscreen" and never means somebody is watching it.
+            var className = new System.Text.StringBuilder(256);
+            GetClassNameW(window, className, className.Capacity);
+
+            var name = className.ToString();
+            if (name is "Progman" or "WorkerW" or "Shell_TrayWnd") return false;
+
+            if (!GetWindowRect(window, out var bounds)) return false;
+
+            var monitor = MonitorFromWindow(window, MonitorDefaultToNearest);
+            var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+            if (!GetMonitorInfoW(monitor, ref info)) return false;
+
+            if (!FillsMonitor(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom,
+                    info.Monitor.Left, info.Monitor.Top, info.Monitor.Right, info.Monitor.Bottom))
+            {
+                return false;
+            }
+
+            what = name;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>True while any application is holding the given capability open.</summary>

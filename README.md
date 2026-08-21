@@ -51,7 +51,36 @@ actually busy:
 |---|---|---|
 | `PauseWhileMicrophoneInUse` | on | any call, in any app — Teams, Zoom, Meet in a browser, Discord |
 | `PauseWhileCameraInUse` | on | video on, microphone muted |
-| `PauseInFullScreen` | on | an exclusive full-screen game, or Windows presentation mode |
+| `PauseInFullScreen` | on | a window filling a whole screen, a game, or presentation mode |
+| `PauseWhileAudioPlaying` | on | a video or anything else making noise, windowed or not |
+
+**Watching a video is the awkward one.** It produces no input either, and the signal Windows
+itself uses — a player asking for `ES_DISPLAY_REQUIRED` so the screen stays awake — is useless
+here, because PowerToys Awake holds exactly that request permanently. That is the whole reason
+this app measures idleness independently in the first place.
+
+Fullscreen detection does not cover it on its own: a video in a window is not fullscreen at
+all, and `SHQueryUserNotificationState` reports `FullScreenDirect3D` for a browser only
+intermittently. So fullscreen is measured geometrically instead — the foreground window's
+bounds against its monitor's — and sound is treated as a signal in its own right, because sound
+coming out means somebody is listening to it.
+
+The geometry compares all four edges for equality rather than asking whether the window covers
+the screen. A maximised window overshoots its monitor by the width of its invisible resize
+border and stops short at the bottom for the taskbar; a fullscreen one lands exactly on the
+bounds. Testing coverage instead would work until somebody hides their taskbar, at which point
+every maximised window would look fullscreen — the `QUNS_BUSY` mistake all over again.
+
+Silence has to be a real zero for the audio check to be safe: an endpoint idling just above
+zero would hold the screensaver off for ever. Sound heard within the last thirty seconds still
+counts, so a pause in the dialogue or a gap between tracks does not let the screensaver in.
+
+```
+Bubbles.exe --audio
+```
+
+samples the output level for ten seconds, and `--busy` prints the foreground window's geometry
+alongside whatever is holding off, so both decisions can be inspected rather than guessed at.
 
 Microphone and camera state comes from the records Windows keeps for the privacy indicator in
 the taskbar: an app currently holding the device has a start time and no stop time. It needs no
