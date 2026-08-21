@@ -80,6 +80,27 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void Asking_for_a_PIN_is_off_unless_it_is_asked_for()
+    {
+        // Locking somebody's machine is not a thing to start doing to them because they
+        // upgraded, so the default and the absent-from-file case must both be false.
+        Assert.False(new Settings().LockAfterBlackout);
+        Assert.False(JsonSerializer.Deserialize<Settings>("{}")!.LockAfterBlackout);
+        Assert.False(new Settings { LockAfterBlackout = false }.Clamped().LockAfterBlackout);
+    }
+
+    [Fact]
+    public void Asking_for_a_PIN_survives_a_round_trip_and_a_clamp()
+    {
+        // A setting that quietly reverted would leave an unlocked laptop in a hotel room.
+        var saved = JsonSerializer.Serialize(new Settings { LockAfterBlackout = true });
+        var restored = JsonSerializer.Deserialize<Settings>(saved);
+
+        Assert.True(restored!.LockAfterBlackout);
+        Assert.True(restored.Clamped().LockAfterBlackout);
+    }
+
+    [Fact]
     public void Settings_survive_a_round_trip()
     {
         var original = new Settings { BubbleCount = 31, Theme = OverlayTheme.Soap, Emission = false };

@@ -69,6 +69,8 @@ public sealed class TrayIcon : IDisposable
             Choice("Half",        s => s.Dim = 0.55, s => Near(s.Dim, 0.55)),
             Choice("A lot",       s => s.Dim = 0.80, s => Near(s.Dim, 0.80)),
             Choice("Almost black", s => s.Dim = 0.95, s => Near(s.Dim, 0.95))));
+        menu.Items.Add(Toggle("Ask for a PIN after the black screen",
+            s => s.LockAfterBlackout, (s, v) => s.LockAfterBlackout = v));
         menu.Items.Add(Submenu("Hold off while",
             Toggle("The microphone is in use", s => s.PauseWhileMicrophoneInUse, (s, v) => s.PauseWhileMicrophoneInUse = v),
             Toggle("The camera is in use", s => s.PauseWhileCameraInUse, (s, v) => s.PauseWhileCameraInUse = v),

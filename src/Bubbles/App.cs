@@ -1,6 +1,7 @@
 using System.Windows;
 
 using Bubbles.Displays;
+using Bubbles.Interop;
 using Bubbles.Overlay;
 using Bubbles.Session;
 
@@ -48,8 +49,40 @@ public sealed class App : Application
         _displays.RecoverFromCrash();
 
         _overlay = new OverlayWindow(_settings);
-        _overlay.WentDark += () => _displays.Enter();
-        _overlay.LeftDark += () => _displays.Leave();
+        // Whether the screen genuinely arrived at black, as opposed to an Emission that was
+        // interrupted on the way there. LeftDark fires for both; the lock must only follow the
+        // first, or walking in mid-animation would lock you out of your own machine.
+        var reachedBlack = false;
+
+        _overlay.WentDark += () =>
+        {
+            reachedBlack = true;
+            _displays.Enter();
+        };
+
+        _overlay.LeftDark += () =>
+        {
+            // Displays first, always. Locking before the backlight is back would leave the
+            // sign-in screen too dark to read on a monitor that had been dimmed over DDC/CI --
+            // and the lock screen is the one thing this app cannot draw over to explain itself.
+            _displays.Leave();
+
+            if (reachedBlack && _settings.LockAfterBlackout) SessionLock.Request();
+            reachedBlack = false;
+        };
+
+        // If the session locks by any other route -- Win+L, a policy, the lid -- the blackout
+        // is over whether this app likes it or not: the lock screen is what is on display, and
+        // input to it happens on the secure desktop where the idle timer cannot see it. Left
+        // alone, a monitor dimmed over DDC/CI would stay dimmed with a sign-in prompt on it
+        // that nobody can read. So stand down and put the displays back.
+        Microsoft.Win32.SystemEvents.SessionSwitch += (_, e) =>
+        {
+            if (e.Reason != Microsoft.Win32.SessionSwitchReason.SessionLock) return;
+
+            _displays.Leave();
+            reachedBlack = false;
+        };
         _overlay.Show();                       // creates the HWND so the Win32 setup can run
         _overlay.HideBubbles(immediate: true); // ...then gets out of the way until you go idle
 

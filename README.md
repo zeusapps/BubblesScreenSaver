@@ -79,6 +79,34 @@ measured from the end of the call until you touch something, by
 
 Asking for an Emission from the tray still works while held off; if you ask for it, you get it.
 
+## Asking for a PIN
+
+Off by default. Tray → *Ask for a PIN after the black screen*, or `"LockAfterBlackout": true`.
+
+With it on, the session locks once the screen has actually reached black, so coming back needs
+whatever already unlocks the machine — PIN, password or Windows Hello.
+
+**It is Windows' own lock, not a prompt of ours**, and that distinction is the entire feature.
+A PIN box drawn by this app would be theatre: the overlay is click-through and never holds the
+keyboard, so Alt+Tab, the task manager, a remote session or just ending the process would each
+walk straight past it — and it would have to keep a credential of its own to check against.
+`LockWorkStation` hands over to the secure desktop, which no ordinary process can draw on or
+listen to.
+
+Two details worth knowing:
+
+- It fires only once the screen has **reached** black, never while an Emission is still
+  playing. Interrupting the animation leaves you where you were, rather than locking you out
+  for walking past at the wrong moment.
+- The displays are restored **before** the lock. A monitor dimmed over DDC/CI would otherwise
+  be showing a sign-in prompt too dark to read, and the lock screen is the one thing this app
+  cannot draw over to explain itself.
+
+The screensaver is not a security boundary on its own — until the lock lands, the session is
+merely idle. If you want the machine locked the moment it is unattended rather than when you
+return to it, Windows' own *Settings → Accounts → Sign-in options → If you've been away* is the
+thing to use, and the two work together happily.
+
 ---
 
 ## The Zone

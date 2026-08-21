@@ -132,6 +132,16 @@ public sealed class Settings
     /// instead of a plain fade. Zone theme only; either way it ends at pure black.</summary>
     public bool Emission { get; set; } = true;
 
+    /// <summary>Lock the session once the screen has gone black, so coming back needs a PIN,
+    /// password or Windows Hello. Off by default: locking somebody's machine is not something
+    /// to start doing to them unasked.
+    ///
+    /// This is Windows' own lock, not a prompt of ours -- see <see cref="Interop.SessionLock"/>
+    /// for why that distinction is the whole point. It fires only once the screen has actually
+    /// reached black, never while an Emission is still playing, so interrupting the animation
+    /// leaves you where you were.</summary>
+    public bool LockAfterBlackout { get; set; } = false;
+
     [JsonIgnore]
     public static string Directory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Bubbles");
