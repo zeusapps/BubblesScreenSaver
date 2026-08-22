@@ -60,7 +60,7 @@ public sealed class Settings
     public double Wobble { get; set; } = 0.045;
 
     /// <summary>Hide the mouse pointer while the overlay is up. A parked white arrow is
-    /// burn-in too. Ignored in AlwaysOn, where you are actually using the machine.</summary>
+    /// burn-in too.</summary>
     public bool HideCursor { get; set; } = true;
 
     /// <summary>False lets you pop bubbles with the mouse, but the overlay then eats every click. Keep true.</summary>
@@ -116,9 +116,6 @@ public sealed class Settings
 
     /// <summary>Seconds the bubbles take to fade in once you go idle.</summary>
     public double FadeInSeconds { get; set; } = 2.0;
-
-    /// <summary>Run the bubbles all the time instead of waiting for you to go idle.</summary>
-    public bool AlwaysOn { get; set; } = false;
 
     /// <summary>Turn monitor backlights down during blackout. Drawing black is enough for
     /// OLED, where black is unlit; an LCD keeps glowing behind it. Offered to every monitor --

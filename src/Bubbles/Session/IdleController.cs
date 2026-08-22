@@ -104,7 +104,7 @@ public sealed class IdleController : IDisposable
 
         var wantsBlackout = _forceBlackout
                             || (_settings.BlackoutSeconds > 0 && idle >= _settings.BlackoutSeconds);
-        var wantsBubbles = _forceBubbles || _settings.AlwaysOn || idle >= _settings.IdleSeconds;
+        var wantsBubbles = _forceBubbles || idle >= _settings.IdleSeconds;
 
         var next = Resolve(wantsBubbles, wantsBlackout, held);
 

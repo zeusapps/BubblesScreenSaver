@@ -18,7 +18,6 @@ public sealed class TrayIcon : IDisposable
     private readonly ToolStripMenuItem _blackoutNow;
     private readonly List<ToolStripMenuItem> _zoneOnly = new();
     private readonly ToolStripMenuItem _pause;
-    private readonly ToolStripMenuItem _alwaysOn;
     private readonly ToolStripMenuItem _startup;
     private readonly ToolStripMenuItem _pin;
     private readonly List<(ToolStripMenuItem Item, Func<Settings, bool> IsCurrent)> _checks = new();
@@ -38,8 +37,6 @@ public sealed class TrayIcon : IDisposable
         };
 
         _pause = new ToolStripMenuItem("Pause", null, (_, _) => TogglePause()) { CheckOnClick = true };
-        _alwaysOn = new ToolStripMenuItem("Always on (ignore idle timer)", null,
-            (_, _) => Tweak(s => s.AlwaysOn = !s.AlwaysOn));
         _startup = new ToolStripMenuItem("Start with Windows", null,
             (_, _) => Startup.Set(!Startup.IsEnabled));
 
@@ -50,7 +47,6 @@ public sealed class TrayIcon : IDisposable
         _blackoutNow = Item("Black screen now", () => _idle.BlackoutNow());
         menu.Items.Add(_blackoutNow);
         menu.Items.Add(_pause);
-        menu.Items.Add(_alwaysOn);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Submenu("Start after",
             Choice("30 seconds", s => s.IdleSeconds = 30, s => s.IdleSeconds == 30),
@@ -204,7 +200,6 @@ public sealed class TrayIcon : IDisposable
     {
         foreach (var (item, isCurrent) in _checks)
             item.Checked = isCurrent(_settings);
-        _alwaysOn.Checked = _settings.AlwaysOn;
         _startup.Checked = Startup.IsEnabled;
 
         // Say it on the face of the menu, not only on the tick inside.

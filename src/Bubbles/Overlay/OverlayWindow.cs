@@ -119,8 +119,7 @@ public sealed class OverlayWindow : Window
     /// so the Soap theme has none.</summary>
     private bool WeatherWanted => IsZone && _settings.Weather;
 
-    /// <summary>Never hide the pointer in AlwaysOn -- there the overlay is up while you work.</summary>
-    private bool CursorHidingWanted => _settings.HideCursor && !_settings.AlwaysOn;
+    private bool CursorHidingWanted => _settings.HideCursor;
 
     private int SkinCount => IsZone ? Artifacts.Count : BubbleArt.SkinCount;
 

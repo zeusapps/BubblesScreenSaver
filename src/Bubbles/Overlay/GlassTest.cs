@@ -62,7 +62,6 @@ internal static class GlassTest
             HideCursor = false,
             ShowDetector = false,
             Lightning = false,
-            AlwaysOn = false,
             MaxFps = 30,
         }.Clamped();
 

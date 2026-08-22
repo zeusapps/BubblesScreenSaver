@@ -430,7 +430,6 @@ must return *no hash* rather than *some other file's hash*.
 | `Wobble` | 0.045 | squash-and-stretch on top of the silhouette morph |
 | `MaxFps` | 30 | frame cap; `0` follows the compositor |
 | `FadeInSeconds` | 2.0 | fade-in length |
-| `AlwaysOn` | false | draw all the time instead of waiting for idle |
 | `ClickThrough` | true | leave this on; false makes the overlay eat every click |
 | `HideCursor` | true | hide the mouse pointer while the overlay is up |
 | `Theme` | `Zone` | `Zone` for artifacts, `Soap` for plain soap bubbles |
