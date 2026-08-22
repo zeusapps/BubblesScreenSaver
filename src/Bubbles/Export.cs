@@ -25,6 +25,7 @@ internal static class Export
         Save(MotionStrip(), Path.Combine(directory, "motion.png"));
         Save(HeroShot(), Path.Combine(directory, "hero.png"));
         Save(LightningStrip(), Path.Combine(directory, "lightning.png"));
+        Save(WeatherStrip(), Path.Combine(directory, "weather.png"));
         Save(ScreensStrip(), Path.Combine(directory, "screens.png"));
     }
 
@@ -389,6 +390,86 @@ internal static class Export
         Measure(layers, new Size(w, h));
 
         // Scaled only for the export. Everything above ran at the size a real desktop would be.
+        var shrunk = new Viewbox { Child = layers, Width = w / 4, Height = h / 4 };
+        Measure(shrunk, new Size(w / 4, h / 4));
+
+        return new Border { Child = shrunk, Margin = new Thickness(3) };
+    }
+
+    /// <summary>The four weather states over the artifacts, and one frame mid-change.
+    ///
+    /// Over the artifacts rather than over a black card, because where weather sits in the stack
+    /// is the point: fog and rain go in front, and what has to be judged is whether the artifacts
+    /// still read through them.</summary>
+    private static FrameworkElement WeatherStrip()
+    {
+        var strip = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+
+        strip.Children.Add(WeatherMoment("clear", Weather.Clear));
+        strip.Children.Add(WeatherMoment("fog", Weather.Fog));
+        strip.Children.Add(WeatherMoment("rain", Weather.Rain));
+
+        // Caught just after the storm's first strike. Without a bolt in it the storm panel is
+        // indistinguishable from the rain one, which is the opposite of what it is for.
+        strip.Children.Add(WeatherMoment("storm", Weather.Storm, bolt: 3.02));
+
+        strip.Children.Add(WeatherMoment("fog to rain", Weather.Rain, Weather.Fog, 0.5));
+
+        return strip;
+    }
+
+    /// <param name="bolt">Seconds into the ambient storm's own clock, or 0 for no lightning.</param>
+    private static FrameworkElement WeatherMoment(string label, Weather current,
+        Weather? outgoing = null, double progress = 1, double bolt = 0)
+    {
+        // Rendered at better than a full fog tile across, then scaled down. At panel size the
+        // fog tile never repeated inside the frame, so the seam that made it look like a grid of
+        // boxes could not appear in the very image meant to review it.
+        const double w = 1600, h = 1000;
+        var layers = new Grid { Width = w, Height = h };
+
+        layers.Children.Add(new Rectangle { Fill = MockDesktop() });
+        layers.Children.Add(new Rectangle { Fill = Brushes.Black, Opacity = 0.55 });
+
+        // Behind the artifacts, where the sky belongs -- so a strike silhouettes them rather
+        // than covering them, the same as during an Emission.
+        if (bolt > 0)
+            layers.Children.Add(new LightningLayer { Ambient = true, Time = bolt });
+
+        var canvas = new Canvas { Opacity = 0.85, ClipToBounds = true };
+        var rng = new Random(5);
+
+        for (var i = 0; i < 5; i++)
+        {
+            var size = 280 + rng.NextDouble() * 360;
+            var image = Snapshot(rng.Next(Artifacts.Count), time: 1.7, size: size);
+            Canvas.SetLeft(image, rng.NextDouble() * (w - size));
+            Canvas.SetTop(image, rng.NextDouble() * (h - size));
+            canvas.Children.Add(image);
+        }
+
+        layers.Children.Add(canvas);
+
+        // In front of the artifacts, where it is in the overlay.
+        var weather = new WeatherLayer { Width = w, Height = h };
+        layers.Children.Add(weather);
+
+        layers.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 44,
+            Foreground = new SolidColorBrush(Color.FromArgb(0xC0, 0xFF, 0xFF, 0xFF)),
+            VerticalAlignment = System.Windows.VerticalAlignment.Bottom,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 20),
+        });
+
+        // Laid out before the weather is asked for, so its own bounds are known -- there is no
+        // display layout here, so that fallback is what it draws against.
+        Measure(layers, new Size(w, h));
+        weather.Show(current, outgoing, progress);
+
         var shrunk = new Viewbox { Child = layers, Width = w / 4, Height = h / 4 };
         Measure(shrunk, new Size(w / 4, h / 4));
 

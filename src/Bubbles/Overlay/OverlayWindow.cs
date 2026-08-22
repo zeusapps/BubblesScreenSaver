@@ -40,6 +40,8 @@ public sealed class OverlayWindow : Window
     private readonly SkyLayer _emission = new() { Opacity = 0, IsHitTestVisible = false };
     private readonly SkyLayer _flash = new() { Opacity = 0, IsHitTestVisible = false };
     private readonly LightningLayer _lightning = new() { Opacity = 0, IsHitTestVisible = false };
+    private readonly WeatherLayer _weather = new() { Opacity = 0 };
+    private readonly WeatherCycle _cycle = new();
     private readonly Canvas _detectorLayer = new() { ClipToBounds = false, Opacity = 0 };
     private readonly Detector _detector = new();
     private Rect _detectorScreen = new(0, 0, 1920, 1080);
@@ -58,6 +60,8 @@ public sealed class OverlayWindow : Window
     private bool _blackout;
     private bool _emitting;
     private double _emissionTime;
+    private double _ambientTime;
+    private bool _ambientLightning;
     private bool _lightningDrawn;
     private double _animationTime;
     private int _frameCounter;
@@ -68,8 +72,25 @@ public sealed class OverlayWindow : Window
     /// <summary>User-facing pause, from the tray menu.</summary>
     public bool Paused { get; set; }
 
-    /// <summary>Internal render suspension: hidden, or drawing into a powered-down panel.</summary>
-    public bool Suspended { get; set; } = true;
+    /// <summary>Internal render suspension: hidden, or drawing into a powered-down panel.
+    ///
+    /// Stops the weather on the way in. Everything else in this window is driven from
+    /// OnRendering, which returns immediately while suspended -- but the weather's motion is
+    /// animations on the compositor, and those keep running whether or not anything is asking
+    /// them to. Leaving them going is the compositor working on a panel nobody can see.</summary>
+    public bool Suspended
+    {
+        get => _suspended;
+        set
+        {
+            if (_suspended == value) return;
+            _suspended = value;
+
+            if (value) _weather.Stop();
+        }
+    }
+
+    private bool _suspended = true;
 
     /// <summary>Whether the artifacts are wanted on screen at all.
     ///
@@ -93,6 +114,10 @@ public sealed class OverlayWindow : Window
     private bool IsZone => _settings.Theme == OverlayTheme.Zone;
 
     private bool DetectorWanted => IsZone && _settings.ShowDetector;
+
+    /// <summary>Whether weather should be running at all. A different place is a different sky,
+    /// so the Soap theme has none.</summary>
+    private bool WeatherWanted => IsZone && _settings.Weather;
 
     /// <summary>Never hide the pointer in AlwaysOn -- there the overlay is up while you work.</summary>
     private bool CursorHidingWanted => _settings.HideCursor && !_settings.AlwaysOn;
@@ -146,6 +171,10 @@ public sealed class OverlayWindow : Window
         _emission.Fill = EmissionSkyBrush();
         _flash.Fill = ShockwaveLightBrush();
 
+        // One source of truth for when the sky goes dark, so the strike schedule follows the
+        // timeline instead of a count someone has to re-derive by hand whenever it is retuned.
+        _lightning.EmissionEnds = DarknessAt;
+
         // Back to front: dimming sheet, burning sky, artifacts, shockwave, detector.
         // The artifacts sit above the sky so they still glow through an Emission rather
         // than being washed flat by it.
@@ -156,6 +185,12 @@ public sealed class OverlayWindow : Window
         _root.Children.Add(_lightning);
 
         _root.Children.Add(_canvas);
+
+        // Weather goes in front of the artifacts. Behind them fog fogs nothing -- the artifacts
+        // stay sharp over the top of it and it reads as a haze on the desktop instead. The
+        // shockwave still comes over everything, because it is the wavefront arriving.
+        _root.Children.Add(_weather);
+
         _root.Children.Add(_flash);
         _detectorLayer.Children.Add(_detector);
         _root.Children.Add(_detectorLayer);
@@ -226,7 +261,18 @@ public sealed class OverlayWindow : Window
 
     public void Apply(Settings settings)
     {
+        var weatherWas = WeatherWanted;
         _settings = settings;
+
+        // Switched back on, so start from a freshly rolled state rather than resuming whatever
+        // half-finished cross-fade it was switched off during.
+        if (WeatherWanted && !weatherWas) _cycle.Restart();
+
+        if (!WeatherWanted)
+        {
+            _weather.Stop();
+            StopAmbientLightning();
+        }
 
         // The whole resting state, not a subset. This used to reset the scrim and the artifacts
         // and leave the sky and the flash wherever an interrupted Emission had put them.
@@ -292,14 +338,18 @@ public sealed class OverlayWindow : Window
     /// itself is left alone: it is what the show and hide fades drive.</summary>
     private void SettleLayers(OverlayStage stage)
     {
-        var rest = LayerRest.For(stage, _settings, DetectorWanted);
+        var rest = LayerRest.For(stage, _settings, DetectorWanted, WeatherWanted);
 
         Settle(_scrim, rest.Scrim);
         Settle(_emission, rest.Sky);
         Settle(_flash, rest.Flash);
         Settle(_canvas, rest.Artifacts);
         Settle(_detectorLayer, rest.Detector);
+        Settle(_weather, rest.Weather);
         Settle(_lightning, 0);
+
+        // Nothing is drawn once the screen is dark, and the scrolls stop with it.
+        if (rest.Weather <= 0) _weather.Stop();
     }
 
     /// <summary>Shows or hides the detector.</summary>
@@ -405,7 +455,7 @@ public sealed class OverlayWindow : Window
 
         if (CursorHidingWanted) NativeCursor.Restore();
 
-        var rest = LayerRest.For(OverlayStage.Artifacts, _settings, DetectorWanted);
+        var rest = LayerRest.For(OverlayStage.Artifacts, _settings, DetectorWanted, WeatherWanted);
 
         Animate(_scrim, rest.Scrim, 0.25);
         Animate(_canvas, rest.Artifacts, 0.25);
@@ -598,6 +648,7 @@ public sealed class OverlayWindow : Window
         // sky ramps over the tallest monitor and the bolts are scaled by it.
         _field.SetRegions(regions);
         _lightning.Regions = regions;
+        _weather.Regions = regions;
         _emission.Regions = regions;
         _flash.Regions = regions;
 
@@ -693,6 +744,108 @@ public sealed class OverlayWindow : Window
         }
     }
 
+    /// <summary>Advances the weather and tells the layer what to show.
+    ///
+    /// Fog is pulled out over an Emission's buildup: a full-desktop haze in front of the
+    /// artifacts flattens exactly the contrast the Emission spends six seconds building. Rain is
+    /// left running and is lit by the strikes.</summary>
+    private void TickWeather(double step)
+    {
+        if (!WeatherWanted || _blackout)
+        {
+            _weather.Stop();
+            StopAmbientLightning();
+            return;
+        }
+
+        if (_pinned is not null)
+        {
+            _weather.FogDamping = _emitting ? FogDampingAt(_emissionTime) : 1;
+            _weather.Show(_pinned.Value.To, _pinned.Value.From, _pinned.Value.Progress);
+            TickAmbientLightning(step, _pinned.Value.StormIntensity);
+            return;
+        }
+
+        // The burning sky is the show. A weather change underneath it would be a second one, so
+        // the cycle is held -- though a cross-fade already in flight is allowed to finish, since
+        // freezing it half way would leave two states live for the whole Emission.
+        _cycle.Suspended = _emitting;
+        _cycle.Tick(step);
+
+        _weather.FogDamping = _emitting ? FogDampingAt(_emissionTime) : 1;
+        _weather.Show(_cycle);
+
+        TickAmbientLightning(step, _cycle.IntensityOf(Weather.Storm));
+    }
+
+    /// <summary>Holds the weather at one state, or part way between two, instead of letting the
+    /// cycle choose. Only <c>--weather-demo</c> uses this: waiting a minute per change is no way
+    /// to look at four states.</summary>
+    internal void PinWeather(Weather to, Weather? from, double progress)
+    {
+        var storm = 0.0;
+        if (to == Weather.Storm) storm += progress;
+        if (from == Weather.Storm) storm += 1 - progress;
+
+        _pinned = (to, from, progress, Math.Clamp(storm, 0, 1));
+    }
+
+    private (Weather To, Weather? From, double Progress, double StormIntensity)? _pinned;
+
+    /// <summary>The distant strikes of the stormy weather, on the same layer the Emission uses.
+    ///
+    /// Gated on the Lightning setting as well as the weather one: this is the same sky doing the
+    /// same thing more quietly, and somebody who turned lightning off did not ask for it back
+    /// because the weather changed.</summary>
+    private void TickAmbientLightning(double step, double storm)
+    {
+        if (_emitting || !_settings.Lightning || storm <= 0)
+        {
+            StopAmbientLightning();
+            return;
+        }
+
+        _lightning.Ambient = true;
+        _ambientTime += step;
+
+        // Held at 1 rather than faded with the storm's intensity: the strikes themselves are
+        // sparse enough that a fading sky would just make them intermittent, and animating this
+        // layer's opacity is what the baked levels exist to avoid.
+        if (!_ambientLightning)
+        {
+            _ambientLightning = true;
+            Settle(_lightning, 1);
+        }
+
+        // The same early-out the Emission uses: a strike is a fraction of a second inside a
+        // window measured in tens, so almost every frame has nothing to redraw.
+        var striking = _lightning.HasStrike(_ambientTime);
+
+        if (striking || _lightningDrawn)
+        {
+            _lightning.Time = _ambientTime;
+            _lightning.InvalidateVisual();
+            _lightningDrawn = striking;
+        }
+    }
+
+    private void StopAmbientLightning()
+    {
+        if (!_ambientLightning) return;
+
+        _ambientLightning = false;
+        _lightning.Ambient = false;
+        _ambientTime = 0;
+        _lightningDrawn = false;
+
+        if (!_emitting) HideLightning();
+    }
+
+    /// <summary>How much of the fog survives at this point in an Emission: all of it as the
+    /// tremors start, none by the time the wavefront hits.</summary>
+    private static double FogDampingAt(double time) =>
+        time >= BuildupEnds ? 0 : Math.Clamp(1 - time / BuildupEnds, 0, 1);
+
     private void ReassertTopmost()
     {
         if (_hwnd == IntPtr.Zero) return;
@@ -773,6 +926,10 @@ public sealed class OverlayWindow : Window
             _emissionTime += step;
             _field.Agitation = EmissionAgitation(_emissionTime);
 
+            // The Emission takes the layer over outright. A storm that was overhead when it
+            // began does not get to keep striking underneath it.
+            _lightning.Ambient = false;
+
             if (_settings.Lightning)
             {
                 // Only redraw while a bolt is actually on screen, plus the one frame after the
@@ -787,6 +944,8 @@ public sealed class OverlayWindow : Window
                 }
             }
         }
+
+        TickWeather(step);
 
         _field.Update(step);
 

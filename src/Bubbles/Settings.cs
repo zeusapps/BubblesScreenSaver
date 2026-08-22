@@ -169,8 +169,17 @@ public sealed class Settings
     public bool ShowDetector { get; set; } = true;
 
     /// <summary>Lightning across the sky during an Emission. Zone theme only, and only while
-    /// the Emission itself is running -- nothing is drawn once the screen is black.</summary>
+    /// the Emission itself is running -- nothing is drawn once the screen is black.
+    ///
+    /// Also gates the ambient strikes of the stormy weather state, which is the same sky doing
+    /// the same thing more quietly. Somebody who turned lightning off does not want it back
+    /// because the weather changed.</summary>
     public bool Lightning { get; set; } = true;
+
+    /// <summary>Ambient weather -- fog, rain, and rain with lightning -- drifting through while
+    /// the artifacts are on screen, changing about once a minute. Zone theme only, and nothing is
+    /// drawn once the screen is black.</summary>
+    public bool Weather { get; set; } = true;
 
     /// <summary>Make the blackout an Emission -- red sky, agitated artifacts, shockwave --
     /// instead of a plain fade. Zone theme only; either way it ends at pure black.</summary>

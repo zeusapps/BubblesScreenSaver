@@ -242,12 +242,51 @@ pressure builds, finished before the sky collapses. Each one flickers three time
 once. They are drawn behind the artifacts, so those silhouette against the flash, and the layer
 is only redrawn while a bolt is actually on screen. `Lightning: false` turns them off.
 
+The schedule runs until it passes the moment the screen goes black, rather than to a fixed
+count. It used to stop at 22 strikes, of which only 18 ever landed before the darkness — the
+last four were scheduled where nobody could see them, and raising the count only added more of
+those. Closing the gaps instead puts 27 on screen.
+
 ```
 Bubbles.exe --emission-demo
 ```
 
 runs a single Emission on demand and quits, which is the only sane way to look at one: waiting
 for a real ten-minute idle works, but any stray mouse movement cancels it.
+
+## Weather
+
+![The four weather states over the artifacts, and one frame mid-change](docs/images/weather.png)
+
+The Zone has weather between Emissions: **clear**, **fog**, **rain**, and **rain with
+lightning**. One is chosen at random, held for about a minute, and cross-faded into the next
+over six seconds. The roll never picks the state already showing, so every change is one you
+can see. A storm is meant to be an event, so it comes up least often.
+
+It is one sky across the whole desktop — two monitors never disagree about the weather — but it
+is drawn per screen, so its density follows each screen's own area.
+
+Fog and rain sit *in front* of the artifacts. Behind them, fog fogs nothing: the artifacts stay
+sharp over the top of it and the effect reads as a smear on the desktop instead. A storm's
+lightning is the exception and stays behind them with the rest of the sky, quieter and rarer
+than an Emission's — and an Emission is never mistakable for weather anyway, because it burns
+the sky red.
+
+Rain and fog are scrolling tiled brushes rather than anything redrawn per frame. Everything else
+in the app that moves is either small, staggered across frames, or on screen for a fraction of a
+second; weather is full-desktop and runs for as long as the screensaver does, so its motion is
+handed to the compositor and costs nothing per frame. Intensity is baked into a ladder of
+pre-built brushes for the same reason — compositing a desktop-sized layer at partial opacity,
+every minute, for ever, is exactly what a cross-fade must not do.
+
+```
+Bubbles.exe --weather-demo
+```
+
+walks through every state with the real cross-fades and quits. Weather changes about once a
+minute in use, which is right for a screensaver and useless for looking at it.
+
+`Weather: false` turns it off.
 
 ## Several monitors
 
@@ -399,7 +438,8 @@ must return *no hash* rather than *some other file's hash*.
 | `CollectRadius` | 60 | how close an artifact must drift to be collected; `0` disables |
 | `ShowDetector` | true | the hunting VELES detector (Zone theme only) |
 | `Emission` | true | Emission instead of a plain fade to black (Zone theme only) |
-| `Lightning` | true | lightning during an Emission (Zone theme only) |
+| `Lightning` | true | lightning during an Emission, and the ambient strikes of stormy weather (Zone theme only) |
+| `Weather` | true | fog, rain and storms drifting through between Emissions (Zone theme only) |
 | `DimMonitorBacklight` | true | take external backlights to minimum over DDC/CI during blackout |
 | `DisableHdrDuringBlackout` | true | switch HDR off while dark so the backlight can be dimmed |
 | `MonitorStandby` | false | also ask external monitors to enter standby (darker, slower to wake) |

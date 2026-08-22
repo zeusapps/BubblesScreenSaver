@@ -242,6 +242,10 @@ internal static class Program
         var demo = args.Length >= 1 && args[0] == "--emission-demo";
         App.EmissionDemo = demo;
 
+        // `--weather-demo` walks through every weather state with its cross-fades, for looking
+        // at them without waiting a minute per change.
+        App.WeatherDemo = args.Length >= 1 && args[0] == "--weather-demo";
+
         Updater.SweepOldBinaries();
 
         // One overlay is plenty. The wait matters: after an update the outgoing process is

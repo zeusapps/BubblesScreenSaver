@@ -33,10 +33,16 @@ public readonly record struct LayerRest(
     double Sky,
     double Flash,
     double Artifacts,
-    double Detector)
+    double Detector,
+    double Weather)
 {
     /// <param name="detectorWanted">Whether the theme has a detector at all.</param>
-    public static LayerRest For(OverlayStage stage, Settings settings, bool detectorWanted) => stage switch
+    /// <param name="weatherWanted">Whether the theme has weather at all, and it is switched on.
+    /// The layer's own opacity is only ever 0 or 1: how heavily a weather state is showing is
+    /// baked into its brushes, not composited, so that a cross-fade every minute does not put
+    /// the whole desktop onto an intermediate surface.</param>
+    public static LayerRest For(OverlayStage stage, Settings settings, bool detectorWanted,
+        bool weatherWanted = false) => stage switch
     {
         // Hidden. The layers beneath still hold their artifacts-stage values so that showing
         // is a fade of the root alone rather than a rebuild of everything under it.
@@ -46,7 +52,8 @@ public readonly record struct LayerRest(
             Sky: 0,
             Flash: 0,
             Artifacts: settings.Opacity,
-            Detector: 0),
+            Detector: 0,
+            Weather: weatherWanted ? 1 : 0),
 
         OverlayStage.Artifacts => new(
             Root: 1,
@@ -54,7 +61,8 @@ public readonly record struct LayerRest(
             Sky: 0,
             Flash: 0,
             Artifacts: settings.Opacity,
-            Detector: detectorWanted ? 1 : 0),
+            Detector: detectorWanted ? 1 : 0,
+            Weather: weatherWanted ? 1 : 0),
 
         // The artifacts emit light, so a real blackout hides them too.
         OverlayStage.Blackout => new(
@@ -63,7 +71,10 @@ public readonly record struct LayerRest(
             Sky: 0,
             Flash: 0,
             Artifacts: 0,
-            Detector: 0),
+            Detector: 0,
+
+            // Nothing is drawn once the screen is dark, and the animations stop with it.
+            Weather: 0),
 
         _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null),
     };

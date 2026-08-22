@@ -4,6 +4,7 @@ using Bubbles.Displays;
 using Bubbles.Interop;
 using Bubbles.Overlay;
 using Bubbles.Session;
+using Bubbles.Zone;
 
 namespace Bubbles;
 
@@ -13,6 +14,9 @@ public sealed class App : Application
     /// idle timer entirely. Waiting for a real idle period makes the Emission almost impossible
     /// to test, since any stray mouse movement cancels it.</summary>
     public static bool EmissionDemo { get; set; }
+
+    /// <summary>Walk through every weather state, with the cross-fades between them.</summary>
+    public static bool WeatherDemo { get; set; }
 
     private Settings _settings = new();
     private OverlayWindow? _overlay;
@@ -89,6 +93,12 @@ public sealed class App : Application
             return;
         }
 
+        if (WeatherDemo)
+        {
+            RunWeatherDemo();
+            return;
+        }
+
         _idle.Start();
     }
 
@@ -121,6 +131,61 @@ public sealed class App : Application
             Shutdown();
         };
         toExit.Start();
+    }
+
+    /// <summary>Shows the artifacts and walks through the four weather states, cross-fading
+    /// between them, then quits.
+    ///
+    /// Weather changes about once a minute in normal use, which is right for a screensaver and
+    /// useless for looking at it: four states and the fades between them would take five minutes
+    /// of sitting still. This holds each for a few seconds instead. The fades are the real ones,
+    /// run at the real length -- they are half of what there is to judge.</summary>
+    private void RunWeatherDemo()
+    {
+        if (_overlay is null) return;
+
+        _overlay.ShowBubbles();
+
+        var order = new[] { Weather.Clear, Weather.Fog, Weather.Rain, Weather.Storm, Weather.Clear };
+
+        // Long enough that the storm shows lightning. Ambient strikes are seconds apart, so a
+        // five-second hold could pass without one and the state looked like plain rain.
+        const double hold = 9.0;
+        var fade = WeatherCycle.CrossFade;
+        var step = hold + fade;
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        var tick = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(50),
+        };
+
+        tick.Tick += (_, _) =>
+        {
+            var at = clock.Elapsed.TotalSeconds;
+            var index = (int)(at / step);
+
+            if (index >= order.Length - 1)
+            {
+                tick.Stop();
+                Shutdown();
+                return;
+            }
+
+            var into = at - index * step;
+
+            // Held, then faded into the next. Progress is of the incoming state, matching what
+            // the cycle reports, so the overlay is driven exactly as it is in normal use.
+            var progress = into <= hold ? 1 : Math.Clamp((into - hold) / fade, 0, 1);
+
+            var to = progress >= 1 ? order[index] : order[index + 1];
+            Weather? from = progress >= 1 ? null : order[index];
+
+            _overlay.PinWeather(to, from, progress);
+        };
+
+        tick.Start();
     }
 
     protected override void OnExit(ExitEventArgs e)
