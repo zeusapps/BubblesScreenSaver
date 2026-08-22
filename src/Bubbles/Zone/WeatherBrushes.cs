@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace Bubbles.Zone;
 
@@ -12,8 +13,15 @@ namespace Bubbles.Zone;
 /// every minute. Two states are live during a cross-fade, so an opacity approach would put two
 /// desktop-sized surfaces up at once, every minute, for ever.
 ///
-/// Everything here is built once and frozen, so a change of intensity is a Fill assignment
-/// rather than any drawing work at all.</summary>
+/// Every tile is rasterised once into a bitmap and tiled as an ImageBrush. Built as vector
+/// drawings they were re-rasterised as the scroll transform moved them, which for fog meant a
+/// hundred-odd radial gradients redrawn across the whole desktop, every frame, for as long as
+/// the fog lasted. That was the one thing this file set out not to do.
+///
+/// Intensity is the brush's own Opacity, not a repainted tile. A Brush's opacity is folded into
+/// the fill as it rasterises; it is UIElement.Opacity that forces WPF onto an intermediate
+/// surface, and that is what the ladder exists to avoid. One bitmap per sheet, eight brushes
+/// sharing it.</summary>
 internal static class WeatherBrushes
 {
     /// <summary>Steps in the intensity ladder. Eight, as everywhere else in this app -- the
@@ -33,6 +41,10 @@ internal static class WeatherBrushes
     /// <summary>How long one tile takes to fall past, per scale. Nearer sheets fall faster,
     /// which is the parallax.</summary>
     public static readonly double[] RainPeriods = [1.5, 1.05, 0.72];
+
+    /// <summary>Sideways travel as a fraction of the fall. Rain leans one way; this is the lean,
+    /// and it has to match the slant baked into the streaks or they skid rather than fall.</summary>
+    public const double RainSlant = 0.22;
 
     /// <summary>How far one fog tile drifts sideways, and how long it takes. Slow enough that
     /// it reads as air moving rather than as something sliding across the screen.</summary>
@@ -87,11 +99,9 @@ internal static class WeatherBrushes
         for (var s = 0; s < RainScales.Length; s++)
         {
             var (w, h, alpha, thickness) = RainScales[s];
-            scales[s] = new Brush[Levels];
 
-            for (var level = 0; level < Levels; level++)
             {
-                var f = (level + 1.0) / Levels;
+                const double f = 1.0;
                 var pen = new Pen(
                     new SolidColorBrush(Color.FromArgb((byte)(255 * alpha * f), Drop.R, Drop.G, Drop.B)),
                     thickness)
@@ -113,7 +123,7 @@ internal static class WeatherBrushes
 
                     streaks.Children.Add(new LineGeometry(
                         new Point(x, y),
-                        new Point(x + length * 0.22, y + length)));
+                        new Point(x + length * RainSlant, y + length)));
                 }
 
                 streaks.Freeze();
@@ -121,21 +131,9 @@ internal static class WeatherBrushes
                 var drawing = new GeometryDrawing(null, pen, streaks);
                 drawing.Freeze();
 
-                // Tiled one tile beyond the viewport in each direction is unnecessary: the
-                // scroll below moves by exactly one period, so the seam always lands off-tile.
-                var brush = new DrawingBrush(drawing)
-                {
-                    TileMode = TileMode.Tile,
-                    Viewport = new Rect(0, 0, w, h),
-                    ViewportUnits = BrushMappingMode.Absolute,
-                    ViewboxUnits = BrushMappingMode.Absolute,
-                    Viewbox = new Rect(0, 0, w, h),
-                    Transform = RainScrolls[s],
-                };
-
-                // Not frozen: the transform is animated. The drawing inside it is, which is
-                // where the cost would otherwise be.
-                scales[s][level] = brush;
+                // Full resolution: streaks are thin, hard-edged lines and a half-scale bitmap
+                // turns them to mush.
+                scales[s] = Ladder(Rasterise(drawing, w, h, 1.0), w, h, RainScrolls[s]);
             }
         }
 
@@ -145,12 +143,11 @@ internal static class WeatherBrushes
     private static Brush[] BuildFog()
     {
         const double w = 1400, h = 900;
-        var levels = new Brush[Levels];
 
-        for (var level = 0; level < Levels; level++)
+        var blobs = new DrawingGroup();
+
         {
-            var f = (level + 1.0) / Levels;
-            var blobs = new DrawingGroup();
+            const double f = 1.0;
 
             // A continuous base, with the patches on top of it.
             //
@@ -222,16 +219,55 @@ internal static class WeatherBrushes
                 }
             }
 
-            blobs.Freeze();
+        }
 
-            levels[level] = new DrawingBrush(blobs)
+        blobs.Freeze();
+
+        // Half resolution. Fog is smooth by definition, so nothing in it survives being
+        // rasterised at 700x450 and tiled back up, and the bitmap costs a quarter as much.
+        return Ladder(Rasterise(blobs, w, h, 0.5), w, h, FogScroll);
+    }
+
+    /// <summary>Draws a tile once into a bitmap, so the scroll moves pixels rather than
+    /// re-running the drawing.</summary>
+    private static BitmapSource Rasterise(Drawing drawing, double w, double h, double scale)
+    {
+        var visual = new DrawingVisual();
+
+        using (var dc = visual.RenderOpen())
+        {
+            dc.PushTransform(new ScaleTransform(scale, scale));
+            dc.DrawDrawing(drawing);
+            dc.Pop();
+        }
+
+        var bitmap = new RenderTargetBitmap(
+            Math.Max(1, (int)Math.Round(w * scale)),
+            Math.Max(1, (int)Math.Round(h * scale)),
+            96, 96, PixelFormats.Pbgra32);
+
+        bitmap.Render(visual);
+        bitmap.Freeze();
+        return bitmap;
+    }
+
+    /// <summary>The eight intensities of one sheet, all sharing a single bitmap and a single
+    /// scroll. Sharing the scroll matters: each level is a different brush object, so a
+    /// per-level transform would send the sheet back to the top of its loop every time the
+    /// cross-fade moved it a rung.</summary>
+    private static Brush[] Ladder(BitmapSource tile, double w, double h, Transform scroll)
+    {
+        var levels = new Brush[Levels];
+
+        for (var level = 0; level < Levels; level++)
+        {
+            levels[level] = new ImageBrush(tile)
             {
+                Opacity = (level + 1.0) / Levels,
                 TileMode = TileMode.Tile,
                 Viewport = new Rect(0, 0, w, h),
                 ViewportUnits = BrushMappingMode.Absolute,
-                ViewboxUnits = BrushMappingMode.Absolute,
-                Viewbox = new Rect(0, 0, w, h),
-                Transform = FogScroll,
+                Transform = scroll,
             };
         }
 

@@ -161,12 +161,19 @@ internal sealed class WeatherLayer : Canvas
             }
 
             var tile = WeatherBrushes.RainTile(scale);
-            var period = TimeSpan.FromSeconds(WeatherBrushes.RainPeriods[scale]);
+            var seconds = WeatherBrushes.RainPeriods[scale];
 
-            // Exactly one tile per loop, so the wrap is invisible. The sideways component
-            // matches the streaks' slant, so the drops fall along themselves.
-            scroll.BeginAnimation(TranslateTransform.YProperty, Loop(tile.Height, period));
-            scroll.BeginAnimation(TranslateTransform.XProperty, Loop(tile.Height * 0.22, period));
+            // Each axis wraps on its own tile dimension, so both loops are seamless. The sideways
+            // one used to travel 0.22 of the tile's *height*, which is no whole number of tile
+            // widths, so every cycle ended by snapping the rain back a fraction of a tile -- the
+            // jump that made it look like it was stuttering rather than falling.
+            //
+            // The slant survives as the ratio of the two speeds: X crosses a tile width in
+            // whatever time makes its speed 0.22 of the fall.
+            var across = seconds * tile.Width / (WeatherBrushes.RainSlant * tile.Height);
+
+            scroll.BeginAnimation(TranslateTransform.YProperty, Loop(tile.Height, TimeSpan.FromSeconds(seconds)));
+            scroll.BeginAnimation(TranslateTransform.XProperty, Loop(tile.Width, TimeSpan.FromSeconds(across)));
         }
 
         var drift = WeatherBrushes.FogDrift();
