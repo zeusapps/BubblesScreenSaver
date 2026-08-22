@@ -191,7 +191,7 @@ public sealed class OverlayWindow : Window
         if (source?.CompositionTarget is not null)
             source.CompositionTarget.BackgroundColor = Colors.Transparent;
 
-        Native.MakeGlass(_hwnd);
+        ApplyGlass();
         Native.MakeClickThrough(_hwnd, _settings.ClickThrough);
         StretchOverVirtualDesktop();
 
@@ -218,13 +218,11 @@ public sealed class OverlayWindow : Window
     public void Apply(Settings settings)
     {
         _settings = settings;
-        if (!_blackout)
-        {
-            _canvas.BeginAnimation(UIElement.OpacityProperty, null);
-            _scrim.BeginAnimation(UIElement.OpacityProperty, null);
-            _canvas.Opacity = settings.Opacity;
-            _scrim.Opacity = settings.Dim;
-        }
+
+        // The whole resting state, not a subset. This used to reset the scrim and the artifacts
+        // and leave the sky and the flash wherever an interrupted Emission had put them.
+        if (!_blackout) SettleLayers(_shown ? OverlayStage.Artifacts : OverlayStage.Active);
+
         _frameBudget = settings.MaxFps > 0 ? 1.0 / settings.MaxFps : 0;
         if (_hwnd != IntPtr.Zero) Native.MakeClickThrough(_hwnd, settings.ClickThrough);
         _field.SkinCount = SkinCount;
@@ -236,8 +234,6 @@ public sealed class OverlayWindow : Window
         // unit box the transform divides by belongs to the other theme.
         RebuildVisuals();
         foreach (var v in _visuals) v.Skin = -1;
-
-        if (!_blackout) SetDetectorVisible(DetectorWanted);
 
         settings.Save();
     }
@@ -257,23 +253,48 @@ public sealed class OverlayWindow : Window
         StretchOverVirtualDesktop();
         UpdateRegions();
 
-        SetDetectorVisible(DetectorWanted);
+        // Everything underneath the root goes to its resting value before the root fades in.
+        // Without this the artifacts arrive over whatever an interrupted blackout left behind --
+        // in the worst case a scrim still held at 1, which is a solid black screen.
+        SettleLayers(OverlayStage.Artifacts);
+
         if (CursorHidingWanted) NativeCursor.Hide();
 
         Fade(to: 1, seconds: _settings.FadeInSeconds, thenHide: false);
     }
 
-    /// <summary>Shows or hides the detector.
+    /// <summary>Assigns an opacity so that it actually takes.
     ///
     /// The animation has to be cleared first. Once a property has been animated with
     /// FillBehavior.HoldEnd, the held value outranks anything assigned directly -- so after a
     /// single blackout, assigning Opacity did nothing and the detector stayed on screen in a
-    /// theme that has no detector, frozen, because nothing was ticking it any more.</summary>
-    private void SetDetectorVisible(bool visible)
+    /// theme that has no detector, frozen, because nothing was ticking it any more.
+    ///
+    /// The scrim, the sky and the flash are animated exactly the same way and carry exactly the
+    /// same hazard, so every layer goes through here rather than only the one where it was
+    /// noticed first.</summary>
+    private static void Settle(UIElement target, double opacity)
     {
-        _detectorLayer.BeginAnimation(UIElement.OpacityProperty, null);
-        _detectorLayer.Opacity = visible ? 1 : 0;
+        target.BeginAnimation(UIElement.OpacityProperty, null);
+        target.Opacity = opacity;
     }
+
+    /// <summary>Puts every layer beneath the root at its resting value for a stage. The root
+    /// itself is left alone: it is what the show and hide fades drive.</summary>
+    private void SettleLayers(OverlayStage stage)
+    {
+        var rest = LayerRest.For(stage, _settings, DetectorWanted);
+
+        Settle(_scrim, rest.Scrim);
+        Settle(_emission, rest.Sky);
+        Settle(_flash, rest.Flash);
+        Settle(_canvas, rest.Artifacts);
+        Settle(_detectorLayer, rest.Detector);
+        Settle(_lightning, 0);
+    }
+
+    /// <summary>Shows or hides the detector.</summary>
+    private void SetDetectorVisible(bool visible) => Settle(_detectorLayer, visible ? 1 : 0);
 
     /// <summary>Fades to (or back from) a solid black screen. The bubbles themselves emit
     /// light, so a real blackout hides them too and stops rendering entirely.</summary>
@@ -350,12 +371,23 @@ public sealed class OverlayWindow : Window
         _emissionTime = 0;
         _field.Agitation = 1;
         Suspended = true;
-        WentDark?.Invoke();
+        Raise(WentDark, nameof(WentDark));
     }
 
+    /// <summary>Comes back from black.
+    ///
+    /// The overlay puts its own state back *before* it tells anybody. LeftDark restores monitor
+    /// backlights over DDC/CI, changes HDR mode and may request a workstation lock -- the most
+    /// failure-prone work in the application, and slow even when it succeeds, since a mode
+    /// change costs a re-sync on every display.
+    ///
+    /// It used to be raised first, and a throw from it skipped every restore below. By that
+    /// point _blackout is already false, so SetBlackout(false) early-returns from then on and
+    /// FillBehavior.HoldEnd pins the scrim at full black: the overlay is opaque for the rest of
+    /// the process's life, with nothing on screen to say why. Nothing the overlay owns may
+    /// depend on foreign work succeeding.</summary>
     private void EndBlackout()
     {
-        LeftDark?.Invoke();
         HideLightning();
         _emitting = false;
         _emissionTime = 0;
@@ -364,11 +396,30 @@ public sealed class OverlayWindow : Window
 
         if (CursorHidingWanted) NativeCursor.Restore();
 
-        Animate(_scrim, _settings.Dim, 0.25);
-        Animate(_canvas, _settings.Opacity, 0.25);
-        Animate(_emission, 0, 0.25);
-        Animate(_flash, 0, 0.25);
-        Animate(_detectorLayer, DetectorWanted ? 1 : 0, 0.25);
+        var rest = LayerRest.For(OverlayStage.Artifacts, _settings, DetectorWanted);
+
+        Animate(_scrim, rest.Scrim, 0.25);
+        Animate(_canvas, rest.Artifacts, 0.25);
+        Animate(_emission, rest.Sky, 0.25);
+        Animate(_flash, rest.Flash, 0.25);
+        Animate(_detectorLayer, rest.Detector, 0.25);
+
+        Raise(LeftDark, nameof(LeftDark));
+    }
+
+    /// <summary>Raises one of the blackout events without letting a subscriber's failure become
+    /// the overlay's. The displays have their own recovery -- every change is recorded before it
+    /// is made and replayed at the next launch -- whereas an overlay stuck opaque has none.</summary>
+    private static void Raise(Action? handler, string name)
+    {
+        try
+        {
+            handler?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log($"{name} subscriber threw: {ex}");
+        }
     }
 
     private void HideLightning()
@@ -478,6 +529,28 @@ public sealed class OverlayWindow : Window
         if (_hwnd == IntPtr.Zero || _collapsed) return;
         var (x, y, w, h) = Native.VirtualScreen();
         Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, x, y, w, h, Native.SWP_NOACTIVATE);
+        ApplyGlass();
+    }
+
+    /// <summary>Asks DWM to extend the frame over the whole client area, which is where the
+    /// transparency comes from.
+    ///
+    /// Re-asserted rather than set once. Everything else volatile in this window already is --
+    /// topmost every three seconds, the window bounds on every display change -- and elsewhere
+    /// the same rule holds for monitor brightness and for HDR. This was the last set-once Win32
+    /// call in the file, and a blackout now performs two display mode changes per cycle
+    /// (HDR off going in, HDR on coming out). If the extension does not survive one of those,
+    /// the window paints opaque and every artifact arrives on a black screen.
+    ///
+    /// Called where the window is already being repositioned, so it costs nothing on the render
+    /// path.</summary>
+    private void ApplyGlass()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+
+        // A discarded return value is how an opaque overlay becomes a silent failure.
+        if (!Native.MakeGlass(_hwnd))
+            Diagnostics.Log("MakeGlass failed: the overlay will render opaque");
     }
 
     /// <summary>Hands the simulation one rectangle per physical monitor, in field

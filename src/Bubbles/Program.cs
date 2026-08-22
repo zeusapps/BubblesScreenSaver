@@ -2,6 +2,7 @@ using System.IO;
 
 using Bubbles.Displays;
 using Bubbles.Interop;
+using Bubbles.Overlay;
 using Bubbles.Session;
 
 namespace Bubbles;
@@ -180,6 +181,22 @@ internal static class Program
             Thread.Sleep(2500);
             Console.WriteLine("after:");
             DisplayInfo.Describe().ForEach(Console.WriteLine);
+            return;
+        }
+
+        // `--glass-test` checks the thing no unit test can reach: whether the desktop actually
+        // comes through the overlay. It paints a known colour, puts the overlay over it and
+        // looks at the screen. Touches no saved state, so it is safe alongside a running
+        // instance -- though it does put a window up for a second.
+        if (args.Length >= 1 && args[0] == "--glass-test")
+        {
+            if (AnotherInstanceIsRunning())
+            {
+                Console.WriteLine("another Bubbles is running; its overlay may appear over this test.");
+                Console.WriteLine();
+            }
+
+            GlassTest.Run();
             return;
         }
 

@@ -498,6 +498,21 @@ knowing about if you touch this code:
 - **Transparency** comes from `DwmExtendFrameIntoClientArea` with `-1` margins, not WPF's
   `AllowsTransparency`. The latter forces the whole window onto the software renderer; the DWM
   route keeps it hardware accelerated across a multi-monitor desktop.
+- **The frame extension is re-asserted, not set once** — on show and on every display change,
+  for the same reason topmost is re-asserted every three seconds and monitor brightness every
+  twenty. A blackout performs two display mode changes per cycle (HDR off going in, HDR on
+  coming out), and a window that loses the extension paints opaque with nothing to say why. The
+  call is made where the window is already being repositioned, so it costs nothing on the render
+  path, and a failure is logged rather than discarded.
+- **The layers are settled before the artifacts fade in.** Once a property has been animated
+  with `FillBehavior.HoldEnd`, the held value outranks anything assigned directly, so an
+  interrupted blackout could otherwise leave the dimming sheet stuck at full black. Every layer
+  is cleared and assigned its resting value on the way in, and those resting values are one
+  table — `LayerRest` — rather than the endpoints of a dozen separate animations.
+- **The overlay restores its own state before telling anyone.** Leaving a blackout raises
+  `LeftDark`, which restores backlights over DDC/CI, changes HDR mode and may request a lock.
+  That work used to run first, and a throw from it skipped every restore behind it — leaving the
+  overlay opaque for the rest of the session.
 - **Click-through** is `WS_EX_TRANSPARENT`, plus `WS_EX_NOACTIVATE` and `WS_EX_TOOLWINDOW` so it
   never takes focus or shows up in alt-tab.
 - The window is stretched over the whole **virtual desktop** in physical pixels via
@@ -533,6 +548,17 @@ Set `BUBBLES_LOG=1` before launching to trace stage transitions, overlay opaciti
 placement and artifact pickups to `%APPDATA%\Bubbles\log.txt`. `BUBBLES_SNAP=1` additionally
 dumps what WPF believes it is drawing to `snap.png` after seven seconds. Both are off by
 default and free when off.
+
+```
+Bubbles.exe --glass-test
+```
+
+puts a known colour on screen, shows the overlay over it, captures the result and reports
+whether the colour came through. This is the only way to observe the failure: the layer
+opacities can be perfectly correct while the window still paints opaque, because that failure is
+in the compositor rather than in WPF. Run it together with `BUBBLES_SNAP=1` and the two halves
+separate — a `snap.png` showing artifacts over a dim desktop with this reporting black means the
+frame extension is gone; a black `snap.png` means a layer is stuck.
 
 `Bubbles.exe --export <dir>` renders the artifact sheet, the motion strip, the detector, the
 three stages of an Emission and the hero shot to PNGs and exits — every image in this README is
