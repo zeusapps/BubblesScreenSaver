@@ -42,6 +42,10 @@ public sealed class OverlayWindow : Window
     private readonly LightningLayer _lightning = new() { Opacity = 0, IsHitTestVisible = false };
     private readonly WeatherLayer _weather = new() { Opacity = 0 };
     private readonly WeatherCycle _cycle = new();
+
+    /// <summary>Which anomaly family the weather is coloured by. Fed from the field, on the two
+    /// events that can change what is drifting up there -- never per frame.</summary>
+    private readonly FamilyCensus _census = new();
     private readonly Canvas _detectorLayer = new() { ClipToBounds = false, Opacity = 0 };
     private readonly Detector _detector = new();
     private Rect _detectorScreen = new(0, 0, 1920, 1080);
@@ -62,6 +66,11 @@ public sealed class OverlayWindow : Window
     private double _emissionTime;
     private double _ambientTime;
     private bool _ambientLightning;
+
+    /// <summary>Whether a bolt is on screen this frame, from either sky. Read by the weather,
+    /// which brightens the precipitation for exactly as long as it is true -- so it is written
+    /// wherever HasStrike is already being asked, rather than asked a second time.</summary>
+    private bool _strikeOnScreen;
     private bool _lightningDrawn;
     private double _animationTime;
     private int _frameCounter;
@@ -152,6 +161,13 @@ public sealed class OverlayWindow : Window
         _settings = settings;
         _field = new BubbleField(settings);
         _field.PopulationChanged += RebuildVisuals;
+        _field.PopulationChanged += TakeCensus;
+        _field.ArtifactCollected += OnCollected;
+
+        // The sky has a colour before it has any artifacts to take one from. Without this the
+        // first census would find its own opening family already leading and decide there was
+        // nothing to do, and the weather would run untinted until the field happened to swing.
+        _weather.Family = _census.Dominant;
 
         Title = "Bubbles";
         WindowStyle = WindowStyle.None;
@@ -242,10 +258,18 @@ public sealed class OverlayWindow : Window
         CompositionTarget.Rendering += OnRendering;
         _topmostGuard.Start();
 
-        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BUBBLES_SNAP")))
+        WarmWeatherTiles();
+
+        // BUBBLES_SNAP=7 writes one snapshot seven seconds in; BUBBLES_SNAP=4,20,36 writes
+        // three. A filmstrip is what a cross-fade needs -- a single frame cannot show one
+        // landing, which is the half of weather worth reviewing.
+        var moments = SnapshotMoments(Environment.GetEnvironmentVariable("BUBBLES_SNAP"));
+
+        foreach (var at in moments)
         {
-            var snap = new DispatcherTimer { Interval = TimeSpan.FromSeconds(7) };
-            snap.Tick += (_, _) => { snap.Stop(); SnapshotVisualTree(); };
+            var when = at;
+            var snap = new DispatcherTimer { Interval = TimeSpan.FromSeconds(when) };
+            snap.Tick += (_, _) => { snap.Stop(); SnapshotVisualTree($"snap-{when:0.##}"); };
             snap.Start();
         }
     }
@@ -717,7 +741,50 @@ public sealed class OverlayWindow : Window
 
     /// <summary>Renders what WPF believes it is drawing, straight to a file. Separates
     /// "the element was never drawn" from "it was drawn but not composited to the screen".</summary>
-    private void SnapshotVisualTree()
+    /// <summary>Rasterises every family's weather tiles before any of them is needed.
+    ///
+    /// One family per callback, at idle priority, so the dispatcher gets a turn between them and
+    /// none of this ever lands inside a frame. Done eagerly rather than when a family first wins
+    /// the census: the brushes are wanted on the very first frame of the tint cross-fade, so
+    /// there is no moment between deciding and drawing in which to build them lazily.
+    ///
+    /// The whole set is a few hundred milliseconds and some twelve megabytes, spent once at
+    /// startup while the screen is still empty. That is the trade -- memory for a freeze, made
+    /// deliberately, because the freeze was visible and the memory is not.</summary>
+    private void WarmWeatherTiles()
+    {
+        var pending = new Queue<Anomaly?>();
+        pending.Enqueue(null);
+        foreach (var family in Enum.GetValues<Anomaly>()) pending.Enqueue(family);
+
+        Next();
+
+        void Next()
+        {
+            if (pending.Count == 0) return;
+
+            Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
+            {
+                WeatherBrushes.Warm(pending.Dequeue());
+                Next();
+            });
+        }
+    }
+
+    private static List<double> SnapshotMoments(string? spec)
+    {
+        var moments = new List<double>();
+        if (string.IsNullOrWhiteSpace(spec)) return moments;
+
+        foreach (var part in spec.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            if (double.TryParse(part.Trim(), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var at) && at > 0)
+                moments.Add(at);
+
+        return moments;
+    }
+
+    private void SnapshotVisualTree(string name = "snap")
     {
         try
         {
@@ -733,9 +800,10 @@ public sealed class OverlayWindow : Window
             var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
             encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bmp));
 
-            using var file = System.IO.File.Create(System.IO.Path.Combine(Settings.Directory, "snap.png"));
+            using var file = System.IO.File.Create(
+                System.IO.Path.Combine(Settings.Directory, $"{name}.png"));
             encoder.Save(file);
-            Diagnostics.Log("snapshot written");
+            Diagnostics.Log($"snapshot written: {name}.png");
         }
         catch (Exception ex)
         {
@@ -754,14 +822,31 @@ public sealed class OverlayWindow : Window
         {
             _weather.Stop();
             StopAmbientLightning();
+
+            // Dropped rather than left to decay. Frozen here it would still be running when
+            // weather came back, and the fog would thin for a pickup made hours ago.
+            _fogDipLeft = 0;
             return;
         }
 
+        // Both clocks, every frame: the cycle's, and the tint's. Neither counts anything --
+        // the census that decides the tint runs when the field changes, and this is the
+        // subtraction that walks the cross-fade it started.
+        _census.Tick(step);
+        _weather.Tick(step);
+
+        if (_fogDipLeft > 0) _fogDipLeft = Math.Max(0, _fogDipLeft - step);
+
         if (_pinned is not null)
         {
-            _weather.FogDamping = _emitting ? FogDampingAt(_emissionTime) : 1;
-            _weather.Show(_pinned.Value.To, _pinned.Value.From, _pinned.Value.Progress);
+            _weather.FogDamping = (_emitting ? FogDampingAt(_emissionTime) : 1) * ThermicDamping();
+
+            // Struck before shown, both here and below: the lift lasts exactly the strike, and a
+            // sheet filled before this frame's bolt is known about would lag it by one.
             TickAmbientLightning(step, _pinned.Value.StormIntensity);
+            _weather.Lit = _strikeOnScreen;
+
+            _weather.Show(_pinned.Value.To, _pinned.Value.From, _pinned.Value.Progress);
             return;
         }
 
@@ -771,10 +856,12 @@ public sealed class OverlayWindow : Window
         _cycle.Suspended = _emitting;
         _cycle.Tick(step);
 
-        _weather.FogDamping = _emitting ? FogDampingAt(_emissionTime) : 1;
-        _weather.Show(_cycle);
+        _weather.FogDamping = (_emitting ? FogDampingAt(_emissionTime) : 1) * ThermicDamping();
 
         TickAmbientLightning(step, _cycle.IntensityOf(Weather.Storm));
+        _weather.Lit = _strikeOnScreen;
+
+        _weather.Show(_cycle);
     }
 
     /// <summary>Holds the weather at one state, or part way between two, instead of letting the
@@ -789,7 +876,89 @@ public sealed class OverlayWindow : Window
         _pinned = (to, from, progress, Math.Clamp(storm, 0, 1));
     }
 
+    /// <summary>Holds the weather's tint at one family instead of letting the census choose.
+    ///
+    /// Only <c>--weather-demo</c> uses this, for the same reason it pins the state: a tint holds
+    /// for twenty-five seconds and only moves when the field swings by three artifacts, so
+    /// waiting for one is no way to look at four of them. The change itself is the real one --
+    /// this assigns the property the census assigns, and the layer cross-fades exactly as it
+    /// would in use.</summary>
+    internal void PinFamily(Anomaly family)
+    {
+        _pinnedFamily = family;
+        _weather.Family = family;
+    }
+
+    private Anomaly? _pinnedFamily;
+
     private (Weather To, Weather? From, double Progress, double StormIntensity)? _pinned;
+
+    /// <summary>Takes the family census and hands the answer to the weather.
+    ///
+    /// Called when the population changes and when something is collected, which are the only
+    /// two moments the mix of artifacts on screen can move. The census decides whether that is
+    /// enough to change the sky; the layer cross-fades if it is.</summary>
+    private void TakeCensus()
+    {
+        // A pinned tint takes the census over outright, the way a pinned state takes the cycle
+        // over. Collections go on happening under the demo, and without this the census would
+        // repaint the sky out from under whichever family was being looked at.
+        if (_pinnedFamily is not null) return;
+
+        if (_census.Take(_field.FamilyCounts)) _weather.Family = _census.Dominant;
+    }
+
+    /// <summary>How long after an Electrical pickup the sky answers, in seconds. Long enough to
+    /// read as a consequence rather than as a coincidence.</summary>
+    private const double ElectricalAnswer = 0.4;
+
+    /// <summary>How long a Thermic pickup thins the fog for, and how much of it goes.</summary>
+    private const double ThermicClearing = 2.6;
+    private const double ThermicDepth = 0.45;
+
+    private double _fogDipLeft;
+
+    /// <summary>What the sky does about a collection.
+    ///
+    /// Every family gets the flourish, at the detector, in its own colour. Two of them reach
+    /// further because they have somewhere obvious to reach: Electrical brings the next distant
+    /// strike forward, and Thermic burns a clearing in the fog. Both are parameters given to
+    /// machinery that already exists -- neither draws anything new. Chemical and Gravitational
+    /// get the flourish alone, because inventing a mechanism per family would be four times the
+    /// surface for a second of animation.</summary>
+    private void OnCollected(Anomaly family)
+    {
+        TakeCensus();
+
+        // Weather off is weather off. None of this is a detector effect that happens to be
+        // drawn on the weather layer -- it is the sky reacting, and there is no sky.
+        if (!WeatherWanted || _blackout) return;
+
+        _weather.Flourish(_field.CollectPoint ?? _detector.SensorPoint, family);
+
+        switch (family)
+        {
+            case Anomaly.Electrical when _ambientLightning:
+                // Advanced onto the schedule's own next strike rather than given a new one. The
+                // storm was always going to produce that bolt; it produces it now.
+                var wait = _lightning.NextStrikeIn(_ambientTime);
+                if (wait > ElectricalAnswer) _ambientTime += wait - ElectricalAnswer;
+                break;
+
+            case Anomaly.Thermic:
+                _fogDipLeft = ThermicClearing;
+                break;
+        }
+    }
+
+    /// <summary>How much fog survives a Thermic pickup, as a multiplier that starts and ends at
+    /// one. It thins and comes back; nothing is switched.</summary>
+    private double ThermicDamping()
+    {
+        if (_fogDipLeft <= 0) return 1;
+
+        return 1 - ThermicDepth * Math.Sin(Math.PI * (_fogDipLeft / ThermicClearing));
+    }
 
     /// <summary>The distant strikes of the stormy weather, on the same layer the Emission uses.
     ///
@@ -819,6 +988,7 @@ public sealed class OverlayWindow : Window
         // The same early-out the Emission uses: a strike is a fraction of a second inside a
         // window measured in tens, so almost every frame has nothing to redraw.
         var striking = _lightning.HasStrike(_ambientTime);
+        _strikeOnScreen = striking;
 
         if (striking || _lightningDrawn)
         {
@@ -836,6 +1006,7 @@ public sealed class OverlayWindow : Window
         _lightning.Ambient = false;
         _ambientTime = 0;
         _lightningDrawn = false;
+        if (!_emitting) _strikeOnScreen = false;
 
         if (!_emitting) HideLightning();
     }
@@ -905,11 +1076,42 @@ public sealed class OverlayWindow : Window
         }
     }
 
+    /// <summary>Reports frames that took too long, when BUBBLES_FRAMES is set.
+    ///
+    /// A screensaver that stutters is a screensaver somebody turns off, and a stutter is the one
+    /// defect that leaves no trace in a screenshot -- the tinted weather froze the rain for a
+    /// tenth of a second and every test and every export panel passed. This is how that gets
+    /// answered with a number instead of an impression.</summary>
+    private readonly bool _reportFrames =
+        !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BUBBLES_FRAMES"));
+
+    private double _worstFrame;
+    private int _longFrames;
+    private int _frames;
+
     private void OnRendering(object? sender, EventArgs e)
     {
         var now = _clock.Elapsed;
         var dt = (now - _lastFrame).TotalSeconds;
         _lastFrame = now;
+
+        if (_reportFrames && dt > 0)
+        {
+            _frames++;
+
+            // Two frames at 60fps. Below that the compositor's own jitter dominates and every
+            // run would report hundreds.
+            if (dt > 0.033)
+            {
+                _longFrames++;
+                if (dt > _worstFrame) _worstFrame = dt;
+                Diagnostics.Log($"long frame: {dt * 1000:F0}ms");
+            }
+
+            if (_frames % 600 == 0)
+                Diagnostics.Log($"frames {_frames}, long {_longFrames}, " +
+                                $"worst {_worstFrame * 1000:F0}ms");
+        }
 
         if (Paused || Suspended || dt <= 0) return;
 
@@ -928,12 +1130,14 @@ public sealed class OverlayWindow : Window
             // The Emission takes the layer over outright. A storm that was overhead when it
             // began does not get to keep striking underneath it.
             _lightning.Ambient = false;
+            _strikeOnScreen = false;
 
             if (_settings.Lightning)
             {
                 // Only redraw while a bolt is actually on screen, plus the one frame after the
                 // last one dies so the sky is left clean.
                 var striking = _lightning.HasStrike(_emissionTime);
+                _strikeOnScreen = striking;
 
                 if (striking || _lightningDrawn)
                 {

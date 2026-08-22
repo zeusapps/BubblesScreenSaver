@@ -26,6 +26,7 @@ internal static class Export
         Save(HeroShot(), Path.Combine(directory, "hero.png"));
         Save(LightningStrip(), Path.Combine(directory, "lightning.png"));
         Save(WeatherStrip(), Path.Combine(directory, "weather.png"));
+        Save(FamilyWeatherStrip(), Path.Combine(directory, "families.png"));
         Save(ScreensStrip(), Path.Combine(directory, "screens.png"));
     }
 
@@ -418,9 +419,38 @@ internal static class Export
         return strip;
     }
 
+    /// <summary>Each family's weather, with that family's artifacts drifting in it.
+    ///
+    /// The four panels are the whole point of the tint: they have to be told apart at a glance,
+    /// and they have to still look like rain. The last two are what a strike and a collection do
+    /// to it, which are the other two things weather now answers to.</summary>
+    private static FrameworkElement FamilyWeatherStrip()
+    {
+        var strip = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+
+        foreach (var family in Enum.GetValues<Anomaly>())
+            strip.Children.Add(WeatherMoment(
+                family.ToString().ToLowerInvariant(), Weather.Rain, family: family));
+
+        // A bolt overhead, so the lift the rain takes from it can be judged against the
+        // unlit panel beside it.
+        strip.Children.Add(WeatherMoment(
+            "electrical, lit", Weather.Storm, family: Anomaly.Electrical, bolt: 3.02, lit: true));
+
+        // A pickup, at the middle of the panel because there is no detector in these.
+        strip.Children.Add(WeatherMoment(
+            "thermic, collected", Weather.Rain, family: Anomaly.Thermic, flourish: true));
+
+        return strip;
+    }
+
     /// <param name="bolt">Seconds into the ambient storm's own clock, or 0 for no lightning.</param>
+    /// <param name="family">The anomaly family the weather is coloured by, or null for untinted.</param>
+    /// <param name="lit">Whether a strike is on screen, which brightens the precipitation.</param>
+    /// <param name="flourish">Whether to show the burst a collection leaves.</param>
     private static FrameworkElement WeatherMoment(string label, Weather current,
-        Weather? outgoing = null, double progress = 1, double bolt = 0)
+        Weather? outgoing = null, double progress = 1, double bolt = 0,
+        Anomaly? family = null, bool lit = false, bool flourish = false)
     {
         // Rendered at better than a full fog tile across, then scaled down. At panel size the
         // fog tile never repeated inside the frame, so the seam that made it look like a grid of
@@ -439,10 +469,17 @@ internal static class Export
         var canvas = new Canvas { Opacity = 0.85, ClipToBounds = true };
         var rng = new Random(5);
 
+        // A tinted panel shows that family's own artifacts, because the whole claim is that the
+        // sky takes its colour from what is drifting in it -- and a green sky over four orange
+        // artifacts shows the opposite.
+        var kinds = family is { } anomaly
+            ? Enumerable.Range(0, Artifacts.Count).Where(i => Artifacts.All[i].Family == anomaly).ToArray()
+            : Enumerable.Range(0, Artifacts.Count).ToArray();
+
         for (var i = 0; i < 5; i++)
         {
             var size = 280 + rng.NextDouble() * 360;
-            var image = Snapshot(rng.Next(Artifacts.Count), time: 1.7, size: size);
+            var image = Snapshot(kinds[rng.Next(kinds.Length)], time: 1.7, size: size);
             Canvas.SetLeft(image, rng.NextDouble() * (w - size));
             Canvas.SetTop(image, rng.NextDouble() * (h - size));
             canvas.Children.Add(image);
@@ -451,7 +488,7 @@ internal static class Export
         layers.Children.Add(canvas);
 
         // In front of the artifacts, where it is in the overlay.
-        var weather = new WeatherLayer { Width = w, Height = h };
+        var weather = new WeatherLayer { Width = w, Height = h, Family = family, Lit = lit };
         layers.Children.Add(weather);
 
         layers.Children.Add(new TextBlock
@@ -468,7 +505,14 @@ internal static class Export
         // Laid out before the weather is asked for, so its own bounds are known -- there is no
         // display layout here, so that fallback is what it draws against.
         Measure(layers, new Size(w, h));
+
+        // The tint arrives by cross-fade, and a still frame wants the end of it rather than the
+        // start -- a panel caught at progress zero shows the tint that was there before.
+        weather.Tick(WeatherCycle.CrossFade);
         weather.Show(current, outgoing, progress);
+
+        if (flourish && family is { } collected)
+            weather.FlourishAt(new Point(w / 2, h / 2), collected, phase: 0.3);
 
         var shrunk = new Viewbox { Child = layers, Width = w / 4, Height = h / 4 };
         Measure(shrunk, new Size(w / 4, h / 4));

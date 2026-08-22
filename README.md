@@ -272,12 +272,45 @@ lightning is the exception and stays behind them with the rest of the sky, quiet
 than an Emission's — and an Emission is never mistakable for weather anyway, because it burns
 the sky red.
 
+### The weather belongs to the artifacts
+
+![Each family's weather, a strike lighting the rain, and a collection](docs/images/families.png)
+
+The sky takes its colour from whatever is drifting in it. Whichever anomaly family holds the
+most artifacts on screen tints the rain and the fog: Chemical acid-green, Electrical a cold
+blue-white, Thermic amber, Gravitational muted. The colours are the artifacts' own, so the
+palette is decided in one place.
+
+A family has to lead by three artifacts to take the sky over, and a tint holds for twenty-five
+seconds once it has. Sixteen kinds across four families leaves two of them within an artifact of
+each other most of the time, and without the margin a single pickup would repaint the desktop. A
+tint changes by the same six-second cross-fade a weather change uses.
+
+**Lightning reaches the rain.** While a bolt is on screen the precipitation renders a couple of
+rungs brighter, for exactly as long as the strike lasts — an Emission's strikes and a storm's
+ambient ones alike. The lightning itself stays behind the artifacts where the sky belongs; it is
+the rain that answers it.
+
+**Collecting an artifact disturbs the sky**, at the detector, in that artifact's colour: a short
+burst that fades on its own. Two families reach further than that. Electrical brings the storm's
+next distant strike forward, and Thermic burns a clearing in the fog that closes again a couple
+of seconds later. Both are the existing machinery given a different number, not new drawing.
+
+None of it appears with weather switched off, or in the Soap theme, which has no sky.
+
 Rain and fog are scrolling tiled brushes rather than anything redrawn per frame. Everything else
 in the app that moves is either small, staggered across frames, or on screen for a fraction of a
 second; weather is full-desktop and runs for as long as the screensaver does, so its motion is
 handed to the compositor and costs nothing per frame. Intensity is baked into a ladder of
 pre-built brushes for the same reason — compositing a desktop-sized layer at partial opacity,
-every minute, for ever, is exactly what a cross-fade must not do.
+every minute, for ever, is exactly what a cross-fade must not do. The ladder is 32 rungs: fewer
+and a step across a desktop-wide fog sheet is large enough to see as banding, and rungs are free
+because they all share one bitmap.
+
+A tint is a different bitmap. Rasterising one costs 19–77 ms, so all of them are built at idle
+priority when the window is created — long before the idle timeout draws anything. Built lazily
+instead, the first frame that needed a family would be the frame that built it, which put the
+stall on the exact frame the weather changed colour.
 
 ```
 Bubbles.exe --weather-demo
@@ -642,8 +675,19 @@ Drawing black achieves the actual goal with none of that.
 
 Set `BUBBLES_LOG=1` before launching to trace stage transitions, overlay opacities, detector
 placement and artifact pickups to `%APPDATA%\Bubbles\log.txt`. `BUBBLES_SNAP=1` additionally
-dumps what WPF believes it is drawing to `snap.png` after seven seconds. Both are off by
-default and free when off.
+dumps what WPF believes it is drawing to `snap.png` after seven seconds; a comma-separated list
+(`BUBBLES_SNAP=4,20,36`) writes one per moment, which is what a cross-fade needs — a single frame
+cannot show one landing.
+
+`BUBBLES_FRAMES=1` reports any frame that took longer than 33 ms, with a rolling worst, to the
+same log. A screensaver that stutters is one somebody turns off, and a stutter is the single
+defect that leaves no trace in a screenshot: the weather layer once froze the rain for a tenth of
+a second while every test and every exported panel passed. All three are off by default and free
+when off.
+
+Note that `BUBBLES_SNAP` is not free while it fires — it renders the whole desktop to a bitmap
+and PNG-encodes it on the UI thread, which costs ~240 ms and can provoke a large collection. Do
+not judge frame times from a run that is also taking snapshots.
 
 ```
 Bubbles.exe --glass-test

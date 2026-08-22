@@ -114,3 +114,94 @@ public static class Artifacts
 
     private static Color Rgb(byte r, byte g, byte b) => Color.FromRgb(r, g, b);
 }
+
+/// <summary>The colour each anomaly family lends to the weather drifting past it.
+///
+/// Derived from the roster rather than declared beside it. The palettes in
+/// <see cref="Artifacts.All"/> were chosen once, and a second set of family colours somewhere
+/// else is a second set to keep in step -- so the tint is the average of what the family's own
+/// artifacts already emit.
+///
+/// Averaging four palettes washes the hue out: a family whose members are all pale variations
+/// of one colour averages to something very close to white, which against a dark desktop is
+/// indistinguishable from the untinted grey sheet. So the average is pulled back out to a
+/// saturation floor, which changes how strongly the colour reads without changing which colour
+/// it is.</summary>
+public static class AnomalyTint
+{
+    /// <summary>The least saturation a tint may have. Below this the four families are the same
+    /// off-white and the tint stops being information.</summary>
+    private const double Saturation = 0.45;
+
+    private static readonly Dictionary<Anomaly, Color> Tints = Build();
+
+    /// <summary>The tint for one family.</summary>
+    public static Color Of(Anomaly family) => Tints[family];
+
+    /// <summary>The family an artifact index belongs to, wrapped the same way the field wraps
+    /// its skins.</summary>
+    public static Anomaly FamilyOf(int skin) =>
+        Artifacts.All[((skin % Artifacts.Count) + Artifacts.Count) % Artifacts.Count].Family;
+
+    private static Dictionary<Anomaly, Color> Build()
+    {
+        var tints = new Dictionary<Anomaly, Color>();
+
+        foreach (var family in Enum.GetValues<Anomaly>())
+        {
+            double r = 0, g = 0, b = 0;
+            var n = 0;
+
+            foreach (var artifact in Artifacts.All)
+            {
+                if (artifact.Family != family) continue;
+
+                // Gravitational artifacts are dark bodies with pale shells: their cores are
+                // near-black and would tint nothing at all. The shell is the part of one of
+                // those that is actually visible, so it is the part that lends its colour.
+                //
+                // Two of its four shells are gold, so the average comes out a muted tan rather
+                // than the violet the proposal imagined. Taking Night Star's violet shell alone
+                // was tried and is worse: violet lands closer to Electrical's blue-white than
+                // the tan lands to Thermic's amber, so the change of hue costs more separation
+                // than it buys. Thermic and Gravitational are the tightest pair either way, and
+                // they are told apart by saturation -- a bright amber against a dull tan.
+                var source = family == Anomaly.Gravitational ? artifact.Shell : artifact.Core;
+
+                r += source.R;
+                g += source.G;
+                b += source.B;
+                n++;
+            }
+
+            if (n == 0) continue;
+
+            tints[family] = Saturate(Color.FromRgb(
+                (byte)Math.Round(r / n),
+                (byte)Math.Round(g / n),
+                (byte)Math.Round(b / n)));
+        }
+
+        return tints;
+    }
+
+    /// <summary>Pulls a colour out to the saturation floor, away from its brightest channel.
+    /// Value is left where it was, so a tint is never made lighter or darker than the palette
+    /// it came from -- only more itself.</summary>
+    private static Color Saturate(Color c)
+    {
+        double max = Math.Max(c.R, Math.Max(c.G, c.B));
+        double min = Math.Min(c.R, Math.Min(c.G, c.B));
+
+        if (max <= 0) return c;
+
+        var saturation = (max - min) / max;
+        if (saturation <= 0 || saturation >= Saturation) return c;
+
+        var pull = Saturation / saturation;
+
+        return Color.FromRgb(Channel(c.R), Channel(c.G), Channel(c.B));
+
+        byte Channel(byte v) => (byte)Math.Clamp(Math.Round(max - (max - v) * pull), 0, 255);
+    }
+}

@@ -225,6 +225,36 @@ internal sealed class LightningLayer : RegionLayer
         return false;
     }
 
+    /// <summary>How long until the next strike begins, from a moment in the ambient storm's
+    /// clock.
+    ///
+    /// Asked so that a strike can be brought forward rather than invented: the caller advances
+    /// its own clock by the answer, and the schedule that was always going to produce that bolt
+    /// produces it sooner. Nothing new is drawn and nothing is added to the schedule.
+    ///
+    /// Returns the full period when there is no schedule to consult at all.</summary>
+    public double NextStrikeIn(double time)
+    {
+        var regions = RegionsToDraw();
+        if (regions.Count == 0) return AmbientPeriod;
+
+        var from = At(time);
+        var soonest = AmbientPeriod;
+
+        foreach (var schedule in SchedulesFor(regions.Count))
+        {
+            foreach (var start in schedule)
+            {
+                // The window wraps, so a strike already past this moment comes round again a
+                // period later. Both are candidates.
+                var wait = start >= from ? start - from : start + AmbientPeriod - from;
+                if (wait < soonest) soonest = wait;
+            }
+        }
+
+        return soonest;
+    }
+
     /// <summary>Where in the schedule a moment falls. An Emission runs once from its start; the
     /// ambient storm wraps, so it can go on for as long as the weather does.</summary>
     private double At(double time) => Ambient ? time % AmbientPeriod : time;

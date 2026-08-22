@@ -148,6 +148,16 @@ public sealed class App : Application
 
         var order = new[] { Weather.Clear, Weather.Fog, Weather.Rain, Weather.Storm, Weather.Clear };
 
+        // A family per state, so the demo shows the tints changing as well as the weather. In
+        // use a tint holds for twenty-five seconds and only moves when the field swings by three
+        // artifacts, which is the same reason the states are pinned here rather than waited for.
+        var tints = new[]
+        {
+            Anomaly.Chemical, Anomaly.Electrical, Anomaly.Thermic, Anomaly.Gravitational, Anomaly.Chemical,
+        };
+
+        var tinted = -1;
+
         // Long enough that the storm shows lightning. Ambient strikes are seconds apart, so a
         // five-second hold could pass without one and the state looked like plain rain.
         const double hold = 9.0;
@@ -183,6 +193,14 @@ public sealed class App : Application
             Weather? from = progress >= 1 ? null : order[index];
 
             _overlay.PinWeather(to, from, progress);
+
+            // Handed over at the same moment the state is, so the two cross-fades run together
+            // -- which is the case the two-live-sheets limit exists for.
+            if (index != tinted)
+            {
+                tinted = index;
+                _overlay.PinFamily(tints[index]);
+            }
         };
 
         tick.Start();

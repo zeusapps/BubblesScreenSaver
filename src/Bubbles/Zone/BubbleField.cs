@@ -14,6 +14,10 @@ public sealed class Bubble
     public double Alpha;         // per-bubble opacity multiplier
     public int Skin;             // index into the current theme's sprites
     public int Region;           // which monitor this one lives on
+
+    /// <summary>Whether this bubble is currently in the field's family census. False until it
+    /// is first given a skin, and again once it leaves.</summary>
+    internal bool Counted;
 }
 
 /// <summary>The simulation: bubbles drifting inside their monitor, bouncing off its edges.
@@ -55,7 +59,10 @@ public sealed class BubbleField
     /// <summary>Seconds before the detector can pick up again. Without it, arriving in a
     /// crowded corner collected four artifacts in two seconds, which read as hoovering
     /// rather than as finding something.</summary>
-    private const double CollectCooldown = 1.6;
+    /// <summary>Internal rather than private because the weather's collection flourish has to
+    /// be shorter than this, and that is a relationship worth asserting rather than a comment
+    /// in two files.</summary>
+    internal const double CollectCooldown = 1.6;
 
     private double _collectReadyIn;
 
@@ -67,6 +74,44 @@ public sealed class BubbleField
 
     /// <summary>Raised when bubbles are added or removed, so the view can rebuild its visuals.</summary>
     public event Action? PopulationChanged;
+
+    /// <summary>Raised when the detector picks something up, carrying the family it belonged to.
+    ///
+    /// The family rather than the bubble: what the sky does about a collection depends on which
+    /// anomaly it was, and by the time anyone hears about it the bubble itself has already been
+    /// respawned at an edge as something else.</summary>
+    public event Action<Anomaly>? ArtifactCollected;
+
+    /// <summary>How many artifacts of each family are on screen, indexed by
+    /// <see cref="Anomaly"/>.
+    ///
+    /// Kept as skins are assigned rather than counted when asked. Counting a few hundred
+    /// artifacts is not expensive, but the weather asks after every collection and the render
+    /// path is the one place this must never appear -- so the count moves by one when a skin
+    /// does, and nothing ever walks the field to find out.</summary>
+    public IReadOnlyList<int> FamilyCounts => _families;
+
+    private readonly int[] _families = new int[Enum.GetValues<Anomaly>().Length];
+
+    /// <summary>Gives a bubble a kind, keeping <see cref="FamilyCounts"/> true. Every
+    /// assignment to <see cref="Bubble.Skin"/> goes through here.</summary>
+    private void SetSkin(Bubble b, int skin)
+    {
+        if (b.Counted) _families[(int)AnomalyTint.FamilyOf(b.Skin)]--;
+
+        b.Skin = skin;
+        b.Counted = true;
+        _families[(int)AnomalyTint.FamilyOf(skin)]++;
+    }
+
+    /// <summary>Takes a bubble out of the census, on its way out of the field.</summary>
+    private void Uncount(Bubble b)
+    {
+        if (!b.Counted) return;
+
+        _families[(int)AnomalyTint.FamilyOf(b.Skin)]--;
+        b.Counted = false;
+    }
 
     /// <summary>The screens, in field coordinates. Bubbles are dealt out between them by area,
     /// so the density is the same on each.</summary>
@@ -132,7 +177,7 @@ public sealed class BubbleField
         {
             // Re-roll anything the user may have just changed, keeping positions intact.
             b.Radius = Math.Clamp(b.Radius, _settings.MinRadius, _settings.MaxRadius);
-            if (b.Skin >= SkinCount) b.Skin = NextSkin();
+            if (b.Skin >= SkinCount) SetSkin(b, NextSkin());
             RescaleVelocity(b);
         }
 
@@ -153,6 +198,7 @@ public sealed class BubbleField
 
         while (_bubbles.Count > wanted)
         {
+            Uncount(_bubbles[^1]);
             _bubbles.RemoveAt(_bubbles.Count - 1);
             changed = true;
         }
@@ -200,7 +246,13 @@ public sealed class BubbleField
                     _collectReadyIn = CollectCooldown;
                     Diagnostics.Log($"collected {Artifacts.All[b.Skin % Artifacts.Count].Name} " +
                                     $"(total {Collected})");
+
+                    // Read before the respawn, which is about to make this bubble something
+                    // else entirely, and raised after it, so that a listener asking the field
+                    // what is on screen gets the answer that includes the replacement.
+                    var family = AnomalyTint.FamilyOf(b.Skin);
                     RespawnAtEdge(b);
+                    ArtifactCollected?.Invoke(family);
                     continue;
                 }
             }
@@ -246,9 +298,9 @@ public sealed class BubbleField
             Phase = _rng.NextDouble() * Math.Tau,
             PhaseSpeed = Lerp(0.35, 1.5, _rng.NextDouble()) * (_rng.Next(2) == 0 ? 1 : -1),
             Alpha = Lerp(0.55, 1.0, _rng.NextDouble()),
-            Skin = NextSkin(),
         };
 
+        SetSkin(b, NextSkin());
         PlaceInsideRegion(b);
         RescaleVelocity(b);
         return b;
@@ -281,7 +333,7 @@ public sealed class BubbleField
         b.Radius = Lerp(_settings.MinRadius, _settings.MaxRadius, Math.Pow(_rng.NextDouble(), 1.6));
         b.X = Lerp(area.Left, area.Right, _rng.NextDouble());
         b.Y = atBottom ? area.Bottom + b.Radius : area.Top - b.Radius;
-        b.Skin = NextSkin();
+        SetSkin(b, NextSkin());
         b.Alpha = Lerp(0.55, 1.0, _rng.NextDouble());
 
         RescaleVelocity(b);
@@ -294,7 +346,7 @@ public sealed class BubbleField
         var area = RegionOf(b);
 
         b.Radius = Lerp(_settings.MinRadius, _settings.MaxRadius, Math.Pow(_rng.NextDouble(), 1.6));
-        b.Skin = NextSkin();
+        SetSkin(b, NextSkin());
         b.Alpha = Lerp(0.55, 1.0, _rng.NextDouble());
         b.Phase = _rng.NextDouble() * Math.Tau;
         RescaleVelocity(b);
