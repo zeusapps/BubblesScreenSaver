@@ -249,6 +249,27 @@ Bubbles.exe --emission-demo
 runs a single Emission on demand and quits, which is the only sane way to look at one: waiting
 for a real ten-minute idle works, but any stray mouse movement cancels it.
 
+## Several monitors
+
+![A laptop panel beside a larger external, drawn per screen](docs/images/screens.png)
+
+The overlay is one window stretched over the whole virtual desktop, so every layer inside it is
+laid out against the union of the screens — a rectangle no single monitor resembles. A laptop
+panel beside a larger external is the case that shows what that costs.
+
+Artifacts are spread by **area**, not by monitor. Dealing evenly gave both screens the same
+count, which is four times the density on the smaller one. `BubbleCount` is therefore a density
+— artifacts on a 1920×1080 screen — rather than a total, so connecting a monitor adds artifacts
+instead of thinning out the screen already in front of you. A count stored under the old meaning
+is converted once, against the layout present at the time, so an existing desk keeps the picture
+it was tuned for.
+
+Lightning is scheduled per screen too: each monitor gets its own storm rather than a share of
+one, with bolts scaled by the height of the screen they land on rather than by the tallest one
+attached. The schedules differ per screen, so the desk does not strobe as one. The sky and the
+shockwave ramp their gradients over each screen's own height, so the horizon sits in the same
+place on every one.
+
 ---
 
 ## Install
@@ -362,7 +383,7 @@ must return *no hash* rather than *some other file's hash*.
 | `BlackoutSeconds` | 600 | idle time before the screen goes black; `0` disables |
 | `Dim` | 0.55 | how dark the sheet behind the artifacts is, 0–1 |
 | `Opacity` | 0.85 | overall artifact opacity |
-| `BubbleCount` | 22 | how many are alive at once |
+| `BubbleCount` | 22 | how many are alive on a 1920x1080 screen; a bigger desktop carries proportionally more |
 | `MinRadius` / `MaxRadius` | 40 / 150 | size range, in device-independent pixels |
 | `Speed` | 42 | average drift, DIP per second |
 | `SpeedVariance` | 0.65 | 0 = uniform speed, 1 = wildly varied |

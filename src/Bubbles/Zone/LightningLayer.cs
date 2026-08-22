@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Media;
 
+using Bubbles.Displays;
+
 namespace Bubbles.Zone;
 
 /// <summary>Lightning across the sky during an Emission.
@@ -9,22 +11,31 @@ namespace Bubbles.Zone;
 /// every run without anything being stored: they start sparse, crowd together as the pressure
 /// builds, and stop once the wavefront has passed and the sky is collapsing to black.
 ///
+/// Every monitor gets its own schedule and its own storm. Spreading one storm across the union
+/// of the screens meant each of them saw a fraction of it, and scaling the bolts by the union's
+/// height made them the size of the tallest panel rather than the one they landed on. Schedules
+/// are seeded by region index so the screens do not flash in lockstep -- separate skies would
+/// be wrong, but a desktop-wide strobe is worse.
+///
 /// Alpha levels are pre-baked, as everywhere else in this app, because varying intensity with
 /// PushOpacity forces WPF onto an intermediate surface -- expensive for something that covers
 /// the whole desktop.</summary>
-internal sealed class LightningLayer : FrameworkElement
+internal sealed class LightningLayer : RegionLayer
 {
+    /// <summary>Strikes per screen, not per desktop.</summary>
     private const int Strikes = 22;
+
     private const int Levels = 8;
     private const double StrikeLength = 0.42;
 
     private static readonly Color Core = Color.FromRgb(0xFF, 0xF4, 0xE2);
     private static readonly Color Glow = Color.FromRgb(0xBF, 0xD8, 0xFF);
 
-    private static readonly double[] Schedule = BuildSchedule();
     private static readonly Pen[] CorePens = new Pen[Levels];
     private static readonly Pen[] GlowPens = new Pen[Levels];
     private static readonly Brush[] Washes = new Brush[Levels];
+
+    private double[][] _schedules = Array.Empty<double[]>();
 
     /// <summary>Seconds into the Emission.</summary>
     public double Time { get; set; }
@@ -39,6 +50,7 @@ internal sealed class LightningLayer : FrameworkElement
             GlowPens[i] = FrozenPen(Color.FromArgb((byte)(76 * f), Glow.R, Glow.G, Glow.B), 12);
 
             // A faint wash, so a strike lifts the whole sky rather than only drawing a line.
+            // Relative gradient coordinates, so it ramps over whichever region it is drawn into.
             var wash = new LinearGradientBrush { StartPoint = new Point(0.5, 0), EndPoint = new Point(0.5, 1) };
             wash.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(58 * f), Glow.R, Glow.G, Glow.B), 0));
             wash.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(14 * f), Glow.R, Glow.G, Glow.B), 0.45));
@@ -64,12 +76,36 @@ internal sealed class LightningLayer : FrameworkElement
         return x - Math.Floor(x);
     }
 
-    /// <summary>Strike times: sparse to begin with, crowding as the Emission builds, and
-    /// finished before the sky goes dark.</summary>
-    private static double[] BuildSchedule()
+    /// <summary>Schedules depend only on how many screens there are, not on their geometry, so
+    /// they survive a resolution change and are rebuilt only when a monitor comes or goes.</summary>
+    private double[][] SchedulesFor(int regions)
+    {
+        if (_schedules.Length == regions) return _schedules;
+
+        var built = new double[regions][];
+        for (var i = 0; i < regions; i++) built[i] = BuildSchedule(i);
+
+        _schedules = built;
+        return _schedules;
+    }
+
+
+    protected override void OnRegionsChanged() => _schedules = Array.Empty<double[]>();
+
+    /// <summary>Strike times for one screen: sparse to begin with, crowding as the Emission
+    /// builds, and finished before the sky goes dark.
+    ///
+    /// Internal rather than private so the schedules can be compared directly. What matters
+    /// about them -- that every screen gets a full storm, and that no two screens get the same
+    /// one -- is invisible in a rendered frame and awkward to sample through
+    /// <see cref="HasStrike"/>.</summary>
+    internal static double[] BuildSchedule(int region)
     {
         var times = new double[Strikes];
         var at = 0.9;
+
+        // Offsetting the jitter by region is what stops two screens striking together.
+        var salt = 7 + region * 31;
 
         for (var i = 0; i < Strikes; i++)
         {
@@ -78,7 +114,7 @@ internal sealed class LightningLayer : FrameworkElement
             // The gap closes as the pressure rises, then eases off after the wavefront.
             var progress = Math.Min(1, at / 8.0);
             var gap = 1.5 - 1.05 * progress;
-            at += gap * (0.6 + Hash(i, 7) * 0.8);
+            at += gap * (0.6 + Hash(i, salt) * 0.8);
         }
 
         return times;
@@ -88,10 +124,16 @@ internal sealed class LightningLayer : FrameworkElement
     /// a layer that has nothing to show.</summary>
     public bool HasStrike(double time)
     {
-        foreach (var start in Schedule)
+        var regions = RegionsToDraw();
+        if (regions.Count == 0) return false;
+
+        foreach (var schedule in SchedulesFor(regions.Count))
         {
-            if (start > time) return false;
-            if (time - start <= StrikeLength) return true;
+            foreach (var start in schedule)
+            {
+                if (start > time) break;
+                if (time - start <= StrikeLength) return true;
+            }
         }
 
         return false;
@@ -109,39 +151,53 @@ internal sealed class LightningLayer : FrameworkElement
 
     protected override void OnRender(DrawingContext dc)
     {
-        var w = ActualWidth;
-        var h = ActualHeight;
-        if (w <= 0 || h <= 0) return;
+        var regions = RegionsToDraw();
+        if (regions.Count == 0) return;
 
-        for (var i = 0; i < Schedule.Length; i++)
+        var schedules = SchedulesFor(regions.Count);
+
+        for (var r = 0; r < regions.Count; r++)
         {
-            var start = Schedule[i];
-            if (start > Time) break;
+            var region = regions[r];
+            if (region.Width <= 0 || region.Height <= 0) continue;
 
-            var intensity = Intensity(Time - start);
-            if (intensity < 0.02) continue;
+            var schedule = schedules[r];
 
-            var level = (int)Math.Clamp(Math.Round(intensity * (Levels - 1)), 0, Levels - 1);
-            DrawBolt(dc, i, level, w, h);
+            for (var i = 0; i < schedule.Length; i++)
+            {
+                var start = schedule[i];
+                if (start > Time) break;
+
+                var intensity = Intensity(Time - start);
+                if (intensity < 0.02) continue;
+
+                var level = (int)Math.Clamp(Math.Round(intensity * (Levels - 1)), 0, Levels - 1);
+                DrawBolt(dc, i + r * 101, level, region);
+            }
         }
     }
 
-    private static void DrawBolt(DrawingContext dc, int seed, int level, double w, double h)
+    private static void DrawBolt(DrawingContext dc, int seed, int level, Rect region)
     {
-        // Each bolt owns a slice of the desktop, so two strikes never land on top of each other.
-        var x = w * (0.06 + Hash(seed, 1) * 0.88);
+        var w = region.Width;
+        var h = region.Height;
+
+        // Each bolt owns a slice of its own screen, so two strikes never land on top of each
+        // other and none of them lands on the monitor next door.
+        var x = region.Left + w * (0.06 + Hash(seed, 1) * 0.88);
         var reach = h * (0.55 + Hash(seed, 2) * 0.4);
         var steps = 11 + (int)(Hash(seed, 3) * 5);
 
-        dc.DrawRectangle(Washes[level], null, new Rect(0, 0, w, h * 0.75));
+        dc.DrawRectangle(Washes[level], null, new Rect(region.Left, region.Top, w, h * 0.75));
 
-        var at = new Point(x, 0);
+        var at = new Point(x, region.Top);
         var branchAt = 3 + (int)(Hash(seed, 4) * (steps - 6));
 
         for (var step = 0; step < steps; step++)
         {
             // Deviation is scaled by height, not width. Scaled by width it looked right on a
-            // single screen and became a scribble across a desktop three times as wide.
+            // single screen and became a scribble across a desktop three times as wide. The
+            // height is this screen's, not the tallest one's, for the same reason.
             var next = new Point(
                 at.X + (Hash(seed, step + 20) - 0.5) * h * 0.055,
                 at.Y + reach / steps);

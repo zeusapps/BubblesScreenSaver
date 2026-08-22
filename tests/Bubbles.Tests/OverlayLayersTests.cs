@@ -146,4 +146,29 @@ public sealed class OverlayLayersTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => LayerRest.For((OverlayStage)99, Defaults(), detectorWanted: false));
     }
+
+    [Fact]
+    public void The_density_conversion_waits_for_the_window_to_be_laid_out()
+    {
+        // UpdateRegions gets the field-coordinate ratio by dividing the virtual desktop's width
+        // by ActualWidth, and ShowBubbles calls it before WPF has caught up with SetWindowPos.
+        // On that first call the regions come out a fraction of their real size. Every other
+        // consumer is corrected by the next layout pass; the conversion writes to disk, and this
+        // is what stopped it turning a stored 26 into 53 where the answer was 30.
+        Assert.False(OverlayWindow.LayoutSettled(pixelsPerDip: 2.0, windowScale: 1.5));
+        Assert.True(OverlayWindow.LayoutSettled(pixelsPerDip: 1.5, windowScale: 1.5));
+    }
+
+    [Fact]
+    public void An_unknown_window_scale_is_never_settled()
+    {
+        Assert.False(OverlayWindow.LayoutSettled(pixelsPerDip: 1, windowScale: 0));
+    }
+
+    [Fact]
+    public void Floating_point_noise_still_counts_as_settled()
+    {
+        // The ratio is a division, so it will not land on the scale exactly.
+        Assert.True(OverlayWindow.LayoutSettled(pixelsPerDip: 1.5000001, windowScale: 1.5));
+    }
 }

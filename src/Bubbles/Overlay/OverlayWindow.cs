@@ -8,6 +8,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 
+using Bubbles.Displays;
 using Bubbles.Interop;
 using Bubbles.Zone;
 
@@ -36,8 +37,8 @@ public sealed class OverlayWindow : Window
     private readonly Grid _root = new() { Opacity = 0 };
     private readonly Rectangle _scrim = new() { Fill = Brushes.Black };
     private readonly Canvas _canvas = new() { ClipToBounds = false };
-    private readonly Rectangle _emission = new() { Opacity = 0, IsHitTestVisible = false };
-    private readonly Rectangle _flash = new() { Opacity = 0, IsHitTestVisible = false };
+    private readonly SkyLayer _emission = new() { Opacity = 0, IsHitTestVisible = false };
+    private readonly SkyLayer _flash = new() { Opacity = 0, IsHitTestVisible = false };
     private readonly LightningLayer _lightning = new() { Opacity = 0, IsHitTestVisible = false };
     private readonly Canvas _detectorLayer = new() { ClipToBounds = false, Opacity = 0 };
     private readonly Detector _detector = new();
@@ -588,7 +589,17 @@ public sealed class OverlayWindow : Window
                 b.Height / pixelsPerDip));
         }
 
+        // The first layout is the first chance to convert a BubbleCount written when it meant a
+        // total rather than a density. It needs the real regions in field coordinates, which is
+        // why this cannot happen in Settings.Load.
+        MigrateDensity(regions);
+
+        // Every full-desktop layer draws per screen, not against the union. Without this the
+        // sky ramps over the tallest monitor and the bolts are scaled by it.
         _field.SetRegions(regions);
+        _lightning.Regions = regions;
+        _emission.Regions = regions;
+        _flash.Regions = regions;
 
         // Keep the detector on one screen -- preferably the primary -- so it can never
         // drift into the part of the virtual desktop that no monitor actually covers.
@@ -597,6 +608,51 @@ public sealed class OverlayWindow : Window
             ? 0
             : Math.Max(0, Array.FindIndex(System.Windows.Forms.Screen.AllScreens, s => s.DeviceName == primary.DeviceName));
         _detectorScreen = regions[Math.Min(index, regions.Count - 1)];
+    }
+
+    /// <summary>Whether the field-coordinate ratio agrees with the window's DPI scale, which it
+    /// only does once WPF has laid the window out at its stretched size.
+    ///
+    /// Its own method so the condition can be asserted: everything else that reads stale regions
+    /// is corrected by the next layout pass, but the density conversion writes to disk.</summary>
+    internal static bool LayoutSettled(double pixelsPerDip, double windowScale) =>
+        windowScale > 0 && Math.Abs(pixelsPerDip - windowScale) <= 0.01;
+
+    /// <summary>Converts a stored artifact count from the total it used to mean into the density
+    /// it means now, once, against the layout in front of the user at the time.
+    ///
+    /// Somebody who tuned the count on their own desk keeps the picture they tuned; the new
+    /// meaning only shows itself the next time their layout changes. Stamped and saved
+    /// immediately, because a conversion that re-ran on every launch would compound and their
+    /// artifacts would dwindle a few at a time.</summary>
+    private void MigrateDensity(IReadOnlyList<Rect> regions)
+    {
+        if (!_settings.NeedsDensityMigration || regions.Count == 0) return;
+
+        // Only once WPF has actually laid the window out at its stretched size. UpdateRegions
+        // divides the virtual desktop's width by ActualWidth to get field coordinates, and
+        // ShowBubbles calls it immediately after SetWindowPos, before WPF has caught up -- so on
+        // that first call ActualWidth is still the unstretched size, the ratio is wrong by that
+        // factor, and every region comes out a fraction of its real area. The other consumers
+        // are corrected by the next layout pass; this one writes to disk and is permanent. It
+        // converted 26 into 53 where the right answer was 30.
+        //
+        // The window's own DPI scale is what the ratio should equal once the layout is settled.
+        var scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        if (!LayoutSettled(_pixelsPerDip, scale))
+        {
+            Diagnostics.Log($"density migration deferred: ratio {_pixelsPerDip:N3} " +
+                            $"has not settled to the window scale {scale:N3}");
+            return;
+        }
+
+        var before = _settings.BubbleCount;
+        _settings.BubbleCount = MonitorRegions.DensityFor(before, regions);
+        _settings.SettingsVersion = Settings.DensityVersion;
+        _settings.Save();
+
+        Diagnostics.Log($"BubbleCount {before} converted to density {_settings.BubbleCount} " +
+                        $"across {regions.Count} screen(s)");
     }
 
     /// <summary>Shrinks the hidden window to a single pixel. A window stretched over a

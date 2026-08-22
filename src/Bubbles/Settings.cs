@@ -7,8 +7,38 @@ namespace Bubbles;
 /// <summary>User-tweakable knobs, persisted to %APPDATA%\Bubbles\settings.json.</summary>
 public sealed class Settings
 {
-    /// <summary>How many bubbles are alive at once.</summary>
+    /// <summary>The meaning of this file, so that a setting whose interpretation changes can
+    /// be converted once rather than silently reinterpreted.
+    ///
+    /// Deliberately left at zero by the property initializer rather than at
+    /// <see cref="DensityVersion"/>: a settings.json written before the field existed has no
+    /// such key, deserialization leaves the initializer value in place, and zero is what tells
+    /// the two apart. A fresh install is stamped in <see cref="Load"/>, which is the only place
+    /// that creates settings meant to be authoritative.</summary>
+    public int SettingsVersion { get; set; }
+
+    /// <summary>The version at which <see cref="BubbleCount"/> became a density.</summary>
+    public const int DensityVersion = 1;
+
+    /// <summary>How many bubbles are alive at once on a screen of <see cref="BaselineWidth"/> by
+    /// <see cref="BaselineHeight"/> DIP. A desktop larger than that carries proportionally more,
+    /// and a desktop of several monitors carries its share on each -- so this is a density, not
+    /// a total, and connecting a monitor adds bubbles instead of thinning out the ones already
+    /// on screen.
+    ///
+    /// The clamp still applies to the number written here rather than to the derived total; see
+    /// <c>MonitorRegions.DerivedTotal</c>, which clamps that separately.</summary>
     public int BubbleCount { get; set; } = 22;
+
+    /// <summary>The screen <see cref="BubbleCount"/> is quoted against, in DIP.
+    ///
+    /// DIP rather than physical pixels, because the regions this is compared against are already
+    /// in DIP and because density should follow what the user sees: turning the scaling up makes
+    /// everything on that screen bigger, so the screen holds fewer bubble-sized things and the
+    /// count drops to match. Two physically identical monitors at different scale factors
+    /// therefore get different counts, which is the intended reading rather than an oversight.</summary>
+    public const double BaselineWidth = 1920;
+    public const double BaselineHeight = 1080;
 
     /// <summary>Bubble radius range, in device-independent pixels.</summary>
     public double MinRadius { get; set; } = 40;
@@ -183,7 +213,9 @@ public sealed class Settings
             // A hand-edited file with a typo shouldn't stop the bubbles.
         }
 
-        var fresh = new Settings();
+        // Stamped, so the density conversion never runs against defaults that were already
+        // written in the new meaning.
+        var fresh = new Settings { SettingsVersion = DensityVersion };
         fresh.Save();
         return fresh;
     }
@@ -199,6 +231,14 @@ public sealed class Settings
         {
         }
     }
+
+    /// <summary>Whether <see cref="BubbleCount"/> still holds a total written under the old
+    /// meaning and has yet to be converted to a density.
+    ///
+    /// Answered here but acted on where the monitor regions are known, because the conversion
+    /// needs the real layout in field coordinates and nothing at load time has it.</summary>
+    [JsonIgnore]
+    public bool NeedsDensityMigration => SettingsVersion < DensityVersion;
 
     public Settings Clamped()
     {

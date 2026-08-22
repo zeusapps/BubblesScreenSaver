@@ -1,5 +1,7 @@
 using System.Windows;
 
+using Bubbles.Displays;
+
 namespace Bubbles.Zone;
 
 public sealed class Bubble
@@ -17,9 +19,13 @@ public sealed class Bubble
 /// <summary>The simulation: bubbles drifting inside their monitor, bouncing off its edges.
 ///
 /// Each bubble is bound to one screen rather than to the whole virtual desktop. Two reasons:
-/// the count per screen then stays even instead of drifting into clumps, and a virtual
+/// the density per screen then stays even instead of drifting into clumps, and a virtual
 /// desktop spanning monitors of different heights contains rectangles that are on no
-/// physical screen at all -- bubbles that wandered in there simply vanished.</summary>
+/// physical screen at all -- bubbles that wandered in there simply vanished.
+///
+/// Bound by area, not by monitor. Dealing evenly between screens gave a laptop panel the same
+/// number of bubbles as the external beside it, which is four times the density on the smaller
+/// one. See <see cref="MonitorRegions"/>.</summary>
 public sealed class BubbleField
 {
     private readonly Random _rng = new();
@@ -62,30 +68,50 @@ public sealed class BubbleField
     /// <summary>Raised when bubbles are added or removed, so the view can rebuild its visuals.</summary>
     public event Action? PopulationChanged;
 
-    /// <summary>The screens, in field coordinates. Bubbles are dealt out between them evenly.</summary>
+    /// <summary>The screens, in field coordinates. Bubbles are dealt out between them by area,
+    /// so the density is the same on each.</summary>
     public void SetRegions(IReadOnlyList<Rect> regions)
     {
-        if (regions.Count == 0 || SameAs(regions)) return;
+        if (regions.Count == 0 || MonitorRegions.Same(_regions, regions)) return;
 
         _regions = regions.ToArray();
 
-        // Re-deal existing bubbles so the split stays even after a monitor comes or goes.
-        for (var i = 0; i < _bubbles.Count; i++)
-        {
-            _bubbles[i].Region = i % _regions.Count;
-            PlaceInsideRegion(_bubbles[i]);
-        }
+        // Re-deal so the density stays even after a monitor comes or goes, then resize: the
+        // desktop's area has changed, so how many bubbles it carries has too.
+        Redeal(placeMoved: true);
+        Resize(Bounds);
     }
 
-    private bool SameAs(IReadOnlyList<Rect> other)
+    /// <summary>Assigns every bubble to a region, in proportion to the regions' areas.
+    ///
+    /// Dealt in order rather than reassigned freely, so that adding or removing a few bubbles
+    /// leaves most of them where they already were. A bubble that does change screen has to be
+    /// placed inside its new one -- it would otherwise be off on a monitor it no longer belongs
+    /// to, and the clamp would drag it across the desktop in a straight line.</summary>
+    private void Redeal(bool placeMoved)
     {
-        if (_regions.Count != other.Count) return false;
+        if (_regions.Count == 0) return;
 
-        for (var i = 0; i < other.Count; i++)
-            if (_regions[i] != other[i])
-                return false;
+        var split = MonitorRegions.Split(_bubbles.Count, _regions);
 
-        return true;
+        var region = 0;
+        var placed = 0;
+
+        for (var i = 0; i < _bubbles.Count; i++)
+        {
+            while (region < split.Length - 1 && placed >= split[region])
+            {
+                region++;
+                placed = 0;
+            }
+
+            var bubble = _bubbles[i];
+            var moved = bubble.Region != region;
+            bubble.Region = region;
+            placed++;
+
+            if (moved && placeMoved) PlaceInsideRegion(bubble);
+        }
     }
 
     /// <summary>Deals the next artifact kind. See <see cref="ShuffledDeck"/> for why this is
@@ -120,18 +146,26 @@ public sealed class BubbleField
 
         var changed = false;
 
-        while (_bubbles.Count > _settings.BubbleCount)
+        // BubbleCount is a density, not a total: what one baseline screen carries. The desktop
+        // gets its own share of that, so connecting a monitor adds bubbles rather than thinning
+        // out the screen already in front of you.
+        var wanted = MonitorRegions.DerivedTotal(_settings.BubbleCount, _regions);
+
+        while (_bubbles.Count > wanted)
         {
             _bubbles.RemoveAt(_bubbles.Count - 1);
             changed = true;
         }
 
-        while (_bubbles.Count < _settings.BubbleCount)
+        while (_bubbles.Count < wanted)
         {
-            // Round-robin, so two screens always differ by at most one bubble.
-            _bubbles.Add(Spawn(_bubbles.Count % Math.Max(1, _regions.Count)));
+            // Region assigned by the re-deal below; spawned onto the last one for now so that a
+            // fresh bubble is never placed against a region it is about to be moved off.
+            _bubbles.Add(Spawn(Math.Max(0, _regions.Count - 1)));
             changed = true;
         }
+
+        if (changed) Redeal(placeMoved: true);
 
         foreach (var b in _bubbles) ClampIntoRegion(b);
 

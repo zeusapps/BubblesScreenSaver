@@ -123,6 +123,40 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void A_settings_file_written_before_the_density_change_asks_to_be_converted()
+    {
+        // Anybody upgrading has a settings.json with no version key in it, holding a BubbleCount
+        // that means a total. Missing the case would silently reinterpret it as a density and
+        // multiply their bubbles by the size of their desktop.
+        var old = JsonSerializer.Deserialize<Settings>("""{ "BubbleCount": 22 }""");
+
+        Assert.NotNull(old);
+        Assert.True(old.NeedsDensityMigration);
+    }
+
+    [Fact]
+    public void A_converted_file_is_never_converted_again()
+    {
+        // Without the stamp the conversion re-applies on every launch and compounds, and the
+        // bubbles dwindle a little each time the app starts.
+        var converted = JsonSerializer.Deserialize<Settings>(
+            $$"""{ "BubbleCount": 4, "SettingsVersion": {{Settings.DensityVersion}} }""");
+
+        Assert.NotNull(converted);
+        Assert.False(converted.NeedsDensityMigration);
+    }
+
+    [Fact]
+    public void The_version_stamp_survives_a_round_trip_and_a_clamp()
+    {
+        var saved = JsonSerializer.Serialize(new Settings { SettingsVersion = Settings.DensityVersion });
+        var restored = JsonSerializer.Deserialize<Settings>(saved);
+
+        Assert.False(restored!.NeedsDensityMigration);
+        Assert.False(restored.Clamped().NeedsDensityMigration);
+    }
+
+    [Fact]
     public void Settings_survive_a_round_trip()
     {
         var original = new Settings { BubbleCount = 31, Theme = OverlayTheme.Soap, Emission = false };

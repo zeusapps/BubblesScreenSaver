@@ -5,6 +5,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
+using Bubbles.Displays;
 using Bubbles.Overlay;
 using Bubbles.Zone;
 
@@ -24,6 +25,7 @@ internal static class Export
         Save(MotionStrip(), Path.Combine(directory, "motion.png"));
         Save(HeroShot(), Path.Combine(directory, "hero.png"));
         Save(LightningStrip(), Path.Combine(directory, "lightning.png"));
+        Save(ScreensStrip(), Path.Combine(directory, "screens.png"));
     }
 
     // ---- the ten artifacts, on the sort of dark ground they'll actually sit on ----------
@@ -76,10 +78,18 @@ internal static class Export
         // Measure once so the readout knows its own size, then feed it a field and let it fill in.
         Measure(host, new Size(double.PositiveInfinity, double.PositiveInfinity));
 
-        var settings = new Settings { BubbleCount = 14, MinRadius = 40, MaxRadius = 130 };
+        // BubbleCount is a density -- artifacts on a baseline screen -- so asking for a literal
+        // fourteen on a canvas this size means converting the count back into one.
+        var panel = new Rect(0, 0, 1400, 760);
+        var settings = new Settings
+        {
+            BubbleCount = MonitorRegions.DensityFor(14, new[] { panel }),
+            MinRadius = 40,
+            MaxRadius = 130,
+        };
         var field = new BubbleField(settings) { SkinCount = Artifacts.Count };
-        field.SetRegions(new[] { new Rect(0, 0, 1400, 760) });
-        field.Resize(new Size(1400, 760));
+        field.SetRegions(new[] { panel });
+        field.Resize(new Size(panel.Width, panel.Height));
 
         pda.Tick(1.0, field, new Rect(0, 0, 1400, 760));
         pda.ResetPosition();   // the drift would otherwise carry it off the export canvas
@@ -205,9 +215,15 @@ internal static class Export
 
         layers.Children.Add(canvas);
 
-        var settings = new Settings { BubbleCount = 18, MinRadius = 50, MaxRadius = 140 };
+        var shot = new Rect(0, 0, w, h);
+        var settings = new Settings
+        {
+            BubbleCount = MonitorRegions.DensityFor(18, new[] { shot }),
+            MinRadius = 50,
+            MaxRadius = 140,
+        };
         var field = new BubbleField(settings) { SkinCount = Artifacts.Count };
-        field.SetRegions(new[] { new Rect(0, 0, w, h) });
+        field.SetRegions(new[] { shot });
         field.Resize(new Size(w, h));
 
         var detector = new Detector { Opacity = 1 };
@@ -268,6 +284,115 @@ internal static class Export
         Window(70, 60, 780, 520, 12);
         Window(900, 130, 620, 640, 15);
         return canvas;
+    }
+
+    /// <summary>A laptop panel beside a larger external, as the layers actually treat them.
+    ///
+    /// The whole point of drawing per monitor is only visible on two monitors of different sizes,
+    /// which is exactly the setup nobody has to hand when they are changing this code. So the
+    /// layout is simulated: two regions of the right shape and ratio, handed to the same layers
+    /// the overlay uses, rendered offscreen.
+    ///
+    /// Three things to judge here, and each of them was wrong before per-monitor-layers:
+    /// artifacts at the same density per unit area on both, bolts scaled by the screen they land
+    /// on rather than by the tallest, and the sky's horizon at the same relative height on each.
+    /// The regions are life size -- a real laptop beside a real 4K -- and the whole thing is
+    /// scaled down at the end to fit an image. Life size matters: density is a count, and at
+    /// quarter scale the desktop only earns seven artifacts, so rounding one of them either way
+    /// swings the figure by a third and the comparison says nothing.</summary>
+    private static FrameworkElement ScreensStrip()
+    {
+        var laptop = new Rect(0, 540, 1920, 1080);
+        var external = new Rect(1920, 0, 3840, 2160);
+        var regions = new[] { laptop, external };
+
+        var strip = new StackPanel();
+        strip.Children.Add(ScreensMoment("calm: artifact density and the horizon", regions, bolt: 0));
+
+        // Both screens mid-strike, which is as rare as it sounds -- the schedules are seeded per
+        // screen precisely so they do not flash together. Picked deliberately so the two bolts
+        // can be compared side by side.
+        strip.Children.Add(ScreensMoment("both screens striking: bolts scale to their own screen",
+            regions, bolt: 0.95));
+
+        return strip;
+    }
+
+    private static FrameworkElement ScreensMoment(string label, IReadOnlyList<Rect> regions, double bolt)
+    {
+        var w = regions[^1].Right;
+        var h = regions.Max(r => r.Bottom);
+
+        var layers = new Grid { Width = w, Height = h };
+
+        // The desktop the overlay is not covering. Anything outside a screen is off the desktop
+        // entirely, so it stays black and shows where the monitors are not.
+        layers.Children.Add(new Rectangle { Fill = Brushes.Black });
+
+        var sky = new SkyLayer { Fill = OverlayWindow.EmissionSkyBrush(), Regions = regions, Opacity = 0.94 };
+        layers.Children.Add(sky);
+
+        if (bolt > 0)
+            layers.Children.Add(new LightningLayer { Regions = regions, Time = bolt });
+
+        // Density is the setting's own doing: a count per baseline screen, dealt by area.
+        var settings = new Settings { BubbleCount = 22, MinRadius = 26, MaxRadius = 74 };
+        var field = new BubbleField(settings) { SkinCount = Artifacts.Count };
+        field.SetRegions(regions);
+        field.Resize(new Size(w, h));
+
+        var canvas = new Canvas { Opacity = 0.9, ClipToBounds = true };
+
+        foreach (var b in field.Bubbles)
+        {
+            var image = Snapshot(b.Skin, time: 1.7, size: b.Radius * 2);
+            Canvas.SetLeft(image, b.X - b.Radius);
+            Canvas.SetTop(image, b.Y - b.Radius);
+            canvas.Children.Add(image);
+        }
+
+        layers.Children.Add(canvas);
+
+        // Per-screen counts, so the density claim is readable rather than something to count by
+        // eye across two hundred artifacts.
+        var counts = new int[regions.Count];
+        foreach (var b in field.Bubbles) counts[b.Region]++;
+
+        for (var i = 0; i < regions.Count; i++)
+        {
+            var area = regions[i].Width * regions[i].Height;
+            var note = new TextBlock
+            {
+                Text = $"{counts[i]} artifacts / {counts[i] / area * 100_000:N2} per 100k sq",
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 38,
+                Foreground = new SolidColorBrush(Color.FromArgb(0xE0, 0xFF, 0xFF, 0xFF)),
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+                VerticalAlignment = System.Windows.VerticalAlignment.Top,
+                Margin = new Thickness(regions[i].Left + 18, regions[i].Top + 12, 0, 0),
+            };
+
+            layers.Children.Add(note);
+        }
+
+        layers.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 42,
+            Foreground = new SolidColorBrush(Color.FromArgb(0xC0, 0xFF, 0xFF, 0xFF)),
+            VerticalAlignment = System.Windows.VerticalAlignment.Bottom,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 20),
+        });
+
+        Measure(layers, new Size(w, h));
+
+        // Scaled only for the export. Everything above ran at the size a real desktop would be.
+        var shrunk = new Viewbox { Child = layers, Width = w / 4, Height = h / 4 };
+        Measure(shrunk, new Size(w / 4, h / 4));
+
+        return new Border { Child = shrunk, Margin = new Thickness(3) };
     }
 
     /// <summary>The sky at successive moments of a strike, with nothing else in the way.</summary>
