@@ -83,41 +83,57 @@ public sealed class IdleController : IDisposable
 
         // Somebody on a call is not idle, whatever the input timer says. A deliberate request
         // from the tray still wins -- if you ask for it, you get it.
-        var heldOffBy = _forceBubbles || _forceBlackout ? null : UserBusy.Reason(_settings);
+        var held = _forceBubbles || _forceBlackout ? HoldOff.None : UserBusy.Held(_settings);
 
-        if (heldOffBy != _heldOffBy)
+        if (held.Reason != _heldOffBy)
         {
-            _heldOffBy = heldOffBy;
-            Diagnostics.Log(heldOffBy is null ? "no longer held off" : $"holding off: {heldOffBy}");
+            _heldOffBy = held.Reason;
+            Diagnostics.Log(held.Reason is null
+                ? "no longer held off"
+                : $"holding off: {held.Reason} (artifacts={held.Artifacts} blackout={held.Blackout})");
         }
 
         // Measured through the clock, so that hanging up starts the countdown again instead of
         // arriving with every threshold already passed.
-        var idle = _clock.Elapsed(NativeInput.IdleSeconds(), heldOffBy is not null, Environment.TickCount64);
-
-        if (heldOffBy is not null)
-        {
-            if (Current != Stage.Active) Enter(Stage.Active);
-            return;
-        }
+        //
+        // Only a *total* hold-off stops the countdown. Discounting time while a reason still
+        // permits blackout would freeze the clock short of BlackoutSeconds, and the blackout
+        // that reason deliberately allowed would never arrive -- an album would hold the screen
+        // lit for ever, which is the failure this is meant to fix.
+        var idle = _clock.Elapsed(NativeInput.IdleSeconds(), held.Total, Environment.TickCount64);
 
         var wantsBlackout = _forceBlackout
                             || (_settings.BlackoutSeconds > 0 && idle >= _settings.BlackoutSeconds);
         var wantsBubbles = _forceBubbles || _settings.AlwaysOn || idle >= _settings.IdleSeconds;
 
-        var next = wantsBlackout ? Stage.Blackout
-                 : wantsBubbles ? Stage.Bubbles
-                 : Stage.Active;
+        var next = Resolve(wantsBubbles, wantsBlackout, held);
 
         if (++_ticks % 25 == 0 || next != Current)
         {
             Diagnostics.Log($"tick idle={idle:N1}s cur={Current} next={next} " +
                             $"idleCfg={_settings.IdleSeconds} blackCfg={_settings.BlackoutSeconds} " +
-                            $"fB={_forceBubbles} fK={_forceBlackout}");
+                            $"fB={_forceBubbles} fK={_forceBlackout} " +
+                            $"holdA={held.Artifacts} holdB={held.Blackout}");
         }
+
+        // A blackout arrived at while the artifacts are unwelcome must not be an Emission:
+        // that is twelve seconds of the very artifacts the reason withheld.
+        _overlay.ArtifactsWelcome = !held.Artifacts;
 
         if (next != Current) Enter(next);
     }
+
+    /// <summary>The furthest stage asked for that is not suppressed.
+    ///
+    /// Deliberately not a ceiling. A ceiling on the ordered chain Active &lt; Bubbles &lt; Blackout
+    /// cannot express the case that matters -- music suppressing the artifacts while permitting
+    /// the blackout -- because Blackout is the *further* stage. So with music playing the
+    /// overlay sits at Active right past IdleSeconds and then goes straight to black, never
+    /// having shown an artifact.</summary>
+    internal static Stage Resolve(bool wantsBubbles, bool wantsBlackout, HoldOff held) =>
+        wantsBlackout && !held.Blackout ? Stage.Blackout
+        : wantsBubbles && !held.Artifacts ? Stage.Bubbles
+        : Stage.Active;
 
     private void Enter(Stage stage)
     {

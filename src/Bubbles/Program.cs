@@ -184,6 +184,30 @@ internal static class Program
             return;
         }
 
+        // `--media` reports what Windows believes is playing. The audio meter cannot tell
+        // silent footage from an empty room, and this is what can. Read-only.
+        if (args.Length >= 1 && args[0] == "--media")
+        {
+            Console.WriteLine("media sessions, as Windows reports them:");
+
+            // The manager is requested asynchronously and is not there on the first call.
+            for (var attempt = 0; attempt < 10 && MediaSessions.Playing(out _) == MediaKind.None; attempt++)
+                Thread.Sleep(200);
+
+            MediaSessions.Describe().ForEach(Console.WriteLine);
+            Console.WriteLine();
+
+            var playing = MediaSessions.Playing(out var app);
+
+            Console.WriteLine(playing switch
+            {
+                MediaKind.Video => $"video is playing ({app}): artifacts and blackout both held off",
+                MediaKind.Music => $"music is playing ({app}): artifacts held off, blackout allowed",
+                _ => "nothing is playing: the media signal holds nothing off",
+            });
+            return;
+        }
+
         // `--glass-test` checks the thing no unit test can reach: whether the desktop actually
         // comes through the overlay. It paints a known colour, puts the overlay over it and
         // looks at the screen. Touches no saved state, so it is safe alongside a running

@@ -114,6 +114,35 @@ public sealed class IdleClockTests
         Assert.True(ticker.Idle > 55 * Minute);
     }
 
+    // ---- a partial hold-off must not stop the clock ---------------------------------------
+
+    /// <summary>Music holds the artifacts off but deliberately lets the screen reach black. The
+    /// controller therefore passes <c>held.Total</c> here rather than "anything is held off" --
+    /// pass true for a partial hold-off and the countdown freezes short of BlackoutSeconds, so
+    /// the blackout that reason allowed never arrives and an album keeps an OLED lit for hours.
+    /// Which is the failure the whole arrangement exists to fix.</summary>
+    [Fact]
+    public void A_partial_hold_off_lets_the_countdown_reach_blackout()
+    {
+        const double blackoutAfter = 10 * Minute;
+
+        // Music playing from the moment the user walks away: held.Total is false throughout.
+        var idle = new Ticker().Run(12 * Minute, heldOff: false).Idle;
+
+        Assert.True(idle >= blackoutAfter,
+            $"the countdown reached only {idle:N0}s and would never black out");
+    }
+
+    [Fact]
+    public void A_total_hold_off_still_stops_it()
+    {
+        const double blackoutAfter = 10 * Minute;
+
+        var idle = new Ticker().Run(12 * Minute, heldOff: true).Idle;
+
+        Assert.True(idle < blackoutAfter);
+    }
+
     // ---- input always wins ---------------------------------------------------------------
 
     [Fact]

@@ -4,7 +4,7 @@
     <!-- Windows-targeted and WPF-aware because the types under test sit in an assembly that
          references WPF: Artifact carries a Media.Color, BubbleField works in Rects. None of
          these tests put anything on screen. -->
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

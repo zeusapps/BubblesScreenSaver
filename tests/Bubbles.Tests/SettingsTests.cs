@@ -101,6 +101,28 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void Watching_for_media_is_on_by_default_including_for_an_existing_settings_file()
+    {
+        // Anybody upgrading has a settings.json written before this existed, and the case this
+        // fixes -- silent video, which nothing else catches -- is exactly what they are hitting.
+        Assert.True(new Settings().PauseWhileMediaPlaying);
+        Assert.True(JsonSerializer.Deserialize<Settings>("{}")!.PauseWhileMediaPlaying);
+        Assert.True(JsonSerializer.Deserialize<Settings>("""{"IdleSeconds":30}""")!.PauseWhileMediaPlaying);
+    }
+
+    [Fact]
+    public void Turning_the_media_signal_off_survives_a_round_trip_and_a_clamp()
+    {
+        // The escape hatch for a player that misreports itself as permanently playing. If it
+        // silently reverted, the overlay would be held off for ever with no way back.
+        var saved = JsonSerializer.Serialize(new Settings { PauseWhileMediaPlaying = false });
+        var restored = JsonSerializer.Deserialize<Settings>(saved);
+
+        Assert.False(restored!.PauseWhileMediaPlaying);
+        Assert.False(restored.Clamped().PauseWhileMediaPlaying);
+    }
+
+    [Fact]
     public void Settings_survive_a_round_trip()
     {
         var original = new Settings { BubbleCount = 31, Theme = OverlayTheme.Soap, Emission = false };

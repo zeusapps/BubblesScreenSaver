@@ -55,9 +55,18 @@ public sealed class Settings
     public bool PauseInFullScreen { get; set; } = true;
 
     /// <summary>Stay out of the way while sound is playing. Watching a video produces no
-    /// keyboard or mouse input either, and a video in a window is not fullscreen at all, so
-    /// this is the only thing that catches it.</summary>
+    /// keyboard or mouse input either, and a video in a window is not fullscreen at all. It is
+    /// a proxy, and only a proxy: sound means somebody is listening, but silence does not mean
+    /// nobody is watching. See PauseWhileMediaPlaying for the signal that does.</summary>
     public bool PauseWhileAudioPlaying { get; set; } = true;
+
+    /// <summary>Ask Windows what is playing, rather than asking the loudspeaker.
+    ///
+    /// The media session records behind the taskbar's media flyout say whether a player is
+    /// playing and whether it is video or music, neither of which depends on an audio track
+    /// existing. Video holds everything off; music holds the artifacts off but still lets the
+    /// screen reach black, because an album must not keep an OLED lit for three hours.</summary>
+    public bool PauseWhileMediaPlaying { get; set; } = true;
 
     // ---- idle behaviour -------------------------------------------------------------
 

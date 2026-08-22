@@ -26,7 +26,7 @@ internal static class UserBusy
     private static readonly TimeSpan CacheFor = TimeSpan.FromSeconds(2);
 
     private static DateTime _checkedAt = DateTime.MinValue;
-    private static string? _reason;
+    private static HoldOff _held = HoldOff.None;
 
     private enum NotificationState
     {
@@ -74,41 +74,58 @@ internal static class UserBusy
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetClassNameW(IntPtr window, System.Text.StringBuilder name, int count);
 
-    /// <summary>Why the overlay is holding off, or null if it need not.</summary>
-    public static string? Reason(Settings settings)
+    /// <summary>Which stages are being held off, and why.</summary>
+    public static HoldOff Held(Settings settings)
     {
-        if (DateTime.UtcNow - _checkedAt < CacheFor) return _reason;
+        if (DateTime.UtcNow - _checkedAt < CacheFor) return _held;
         _checkedAt = DateTime.UtcNow;
-        _reason = Evaluate(settings);
-        return _reason;
+        _held = Evaluate(settings);
+        return _held;
     }
 
-    private static string? Evaluate(Settings settings)
+    /// <summary>Why the overlay is holding off, or null if it need not.</summary>
+    public static string? Reason(Settings settings) => Held(settings).Reason;
+
+    private static HoldOff Evaluate(Settings settings)
     {
         // First, and with no setting to turn it off. There is no arrangement in which drawing
         // a screensaver onto a screen the user cannot see is the right thing to do, and the
         // blackout behind it would dim monitors under a sign-in prompt it cannot draw over.
-        if (SessionState.Locked) return "the session is locked";
+        if (SessionState.Locked) return HoldOff.Everything("the session is locked");
 
         if (settings.PauseWhileMicrophoneInUse && DeviceInUse("microphone", out var micApp))
-            return $"microphone in use by {micApp}";
+            return HoldOff.Everything($"microphone in use by {micApp}");
 
         if (settings.PauseWhileCameraInUse && DeviceInUse("webcam", out var camApp))
-            return $"camera in use by {camApp}";
+            return HoldOff.Everything($"camera in use by {camApp}");
 
         if (settings.PauseInFullScreen && FullScreen(out var state))
-            return $"a full-screen or presenting application is running ({state})";
+            return HoldOff.Everything($"a full-screen or presenting application is running ({state})");
 
         if (settings.PauseInFullScreen && FillsAScreen(out var window))
-            return $"a window is filling the screen ({window})";
+            return HoldOff.Everything($"a window is filling the screen ({window})");
+
+        // Before the meter, because it can tell watching from listening and the meter cannot.
+        // Video first: silent footage produces nothing for the meter to hear at all, which is
+        // the case that defeated every other signal here.
+        if (settings.PauseWhileMediaPlaying)
+        {
+            var playing = MediaSessions.Playing(out var player);
+
+            if (playing == MediaKind.Video)
+                return HoldOff.Everything($"video is playing in {player}");
+
+            if (playing == MediaKind.Music)
+                return HoldOff.ArtifactsOnly($"music is playing in {player}");
+        }
 
         if (settings.PauseWhileAudioPlaying &&
             Sound.Playing(AudioActivity.Peak(), Environment.TickCount64))
         {
-            return "sound is playing";
+            return HoldOff.Everything("sound is playing");
         }
 
-        return null;
+        return HoldOff.None;
     }
 
     private static readonly SoundWatch Sound = new();

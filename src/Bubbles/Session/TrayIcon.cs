@@ -82,7 +82,9 @@ public sealed class TrayIcon : IDisposable
             Toggle("The microphone is in use", s => s.PauseWhileMicrophoneInUse, (s, v) => s.PauseWhileMicrophoneInUse = v),
             Toggle("The camera is in use", s => s.PauseWhileCameraInUse, (s, v) => s.PauseWhileCameraInUse = v),
             Toggle("A full-screen app is running", s => s.PauseInFullScreen, (s, v) => s.PauseInFullScreen = v),
-            Toggle("Sound is playing", s => s.PauseWhileAudioPlaying, (s, v) => s.PauseWhileAudioPlaying = v)));
+            Toggle("Sound is playing", s => s.PauseWhileAudioPlaying, (s, v) => s.PauseWhileAudioPlaying = v),
+            Toggle("A video is playing (music still blacks out)",
+                   s => s.PauseWhileMediaPlaying, (s, v) => s.PauseWhileMediaPlaying = v)));
         menu.Items.Add(Submenu("Theme",
             Choice("The Zone — S.T.A.L.K.E.R. artifacts", s => s.Theme = OverlayTheme.Zone,
                    s => s.Theme == OverlayTheme.Zone),

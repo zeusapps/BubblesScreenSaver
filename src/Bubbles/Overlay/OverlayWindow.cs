@@ -70,6 +70,14 @@ public sealed class OverlayWindow : Window
     /// <summary>Internal render suspension: hidden, or drawing into a powered-down panel.</summary>
     public bool Suspended { get; set; } = true;
 
+    /// <summary>Whether the artifacts are wanted on screen at all.
+    ///
+    /// False while something is holding the artifacts off but still permitting a blackout --
+    /// music playing, say. Reaching black by way of an Emission would be twelve seconds of
+    /// artifacts, lightning and a burning sky, which contradicts the reason that allowed the
+    /// blackout in the first place, so the plain fade is used instead.</summary>
+    public bool ArtifactsWelcome { get; set; } = true;
+
     /// <summary>True once the bubbles are on screen (or on their way in).</summary>
     public bool IsShowing => _shown;
 
@@ -307,7 +315,7 @@ public sealed class OverlayWindow : Window
 
         if (on)
         {
-            if (IsZone && _settings.Emission) BeginEmission();
+            if (IsZone && _settings.Emission && ArtifactsWelcome) BeginEmission();
             else BeginPlainFade();
 
             if (CursorHidingWanted) NativeCursor.Hide();

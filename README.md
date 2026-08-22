@@ -47,12 +47,19 @@ An idle timer measures input, and a video call produces none: you sit still, lis
 screensaver concludes you have left. So before anything is drawn, the app asks whether you are
 actually busy:
 
-| Signal | Default | What it catches |
-|---|---|---|
-| `PauseWhileMicrophoneInUse` | on | any call, in any app — Teams, Zoom, Meet in a browser, Discord |
-| `PauseWhileCameraInUse` | on | video on, microphone muted |
-| `PauseInFullScreen` | on | a window filling a whole screen, a game, or presentation mode |
-| `PauseWhileAudioPlaying` | on | a video or anything else making noise, windowed or not |
+| Signal | Default | Artifacts | Blackout | What it catches |
+|---|---|---|---|---|
+| `PauseWhileMicrophoneInUse` | on | held | held | any call, in any app — Teams, Zoom, Meet in a browser, Discord |
+| `PauseWhileCameraInUse` | on | held | held | video on, microphone muted |
+| `PauseInFullScreen` | on | held | held | a window filling a whole screen, a game, or presentation mode |
+| `PauseWhileMediaPlaying` | on | held | **held for video, allowed for music** | what Windows says is playing, sound or no sound |
+| `PauseWhileAudioPlaying` | on | held | held | anything making noise that registers no media session |
+
+A reason names *which stages* it suppresses rather than vetoing everything, because watching and
+listening are not the same thing. A film holds off the artifacts and the blackout both. An album
+holds off the artifacts — nobody wants them thrown over the desktop — but the screen still
+reaches black on schedule, because three hours of music must not keep an OLED lit. Where several
+reasons hold at once, every stage any of them suppresses is suppressed.
 
 **Watching a video is the awkward one.** It produces no input either, and the signal Windows
 itself uses — a player asking for `ES_DISPLAY_REQUIRED` so the screen stays awake — is useless
@@ -74,6 +81,33 @@ every maximised window would look fullscreen — the `QUNS_BUSY` mistake all ove
 Silence has to be a real zero for the audio check to be safe: an endpoint idling just above
 zero would hold the screensaver off for ever. Sound heard within the last thirty seconds still
 counts, so a pause in the dialogue or a gap between tracks does not let the screensaver in.
+
+**But silence is not proof of absence.** *Sound coming out means somebody is listening* is sound
+reasoning; the meter depends on its converse — *no sound means nobody is watching* — and that
+one is false. Silent drone footage in a window defeats every signal above at once: no input, no
+microphone, no camera, nothing filling a screen and nothing to hear. So does muted playback, a
+clip with no audio track, and anything routed to an endpoint other than the metered one.
+
+So the app also asks Windows what is playing, rather than asking the loudspeaker. The media
+session records behind the taskbar's media flyout report, per player, whether it is playing and
+whether it is video, music or an image — none of which depends on an audio track existing.
+
+Only a session reporting **Playing** counts. The mere existence of one does not, and neither
+does `Paused` or `Stopped`: a player left open overnight would otherwise hold the screensaver
+off for ever, which is the `QUNS_BUSY` mistake again. If the sessions cannot be read at all,
+nothing is held off — a permanently failing call must never be able to stop the screensaver
+running, which is worse than a screensaver arriving during a film.
+
+Not every player registers a session — `mpv` and some games do not — so the audio meter stays as
+well. Between them they cover a player that makes no sound and a player that Windows knows
+nothing about.
+
+```
+Bubbles.exe --media
+```
+
+lists every session Windows reports, what each says it is playing, and which stages that would
+hold off.
 
 ```
 Bubbles.exe --audio
@@ -256,7 +290,7 @@ dies at startup. Such a build reports that a newer version exists and tells you 
 ## Build
 
 ```
-dotnet build                                      # src\Bubbles\bin\Debug\net10.0-windows\Bubbles.exe
+dotnet build                                      # src\Bubbles\bin\Debug\net10.0-windows10.0.17763.0\Bubbles.exe
 dotnet test                                       # the suite below
 dotnet publish src\Bubbles -c Release            # dist\Bubbles.exe (~200 KB, uses the installed .NET 10 runtime)
 dotnet publish src\Bubbles -c Release -p:SelfContained=true   # portable, but ~75 MB more RAM at runtime
@@ -322,6 +356,8 @@ must return *no hash* rather than *some other file's hash*.
 | `PauseWhileMicrophoneInUse` | true | hold off while any app is using the microphone |
 | `PauseWhileCameraInUse` | true | hold off while any app is using the camera |
 | `PauseInFullScreen` | true | hold off during full-screen Direct3D or presentation mode |
+| `PauseWhileAudioPlaying` | true | hold off while sound is coming out of the machine |
+| `PauseWhileMediaPlaying` | true | hold off for what Windows reports playing; video holds the blackout too, music does not |
 | `IdleSeconds` | 60 | idle time before the artifacts appear |
 | `BlackoutSeconds` | 600 | idle time before the screen goes black; `0` disables |
 | `Dim` | 0.55 | how dark the sheet behind the artifacts is, 0–1 |
