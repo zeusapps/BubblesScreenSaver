@@ -2,12 +2,6 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 
-// WinForms is globally imported for the tray icon, and it has a control of its own by most of
-// these names. This file is WPF throughout; the aliases keep the ambiguity from spreading.
-using GroupBox = System.Windows.Controls.GroupBox;
-using CheckBox = System.Windows.Controls.CheckBox;
-using ComboBox = System.Windows.Controls.ComboBox;
-
 using Bubbles.Overlay;
 using Bubbles.Zone;
 
@@ -338,8 +332,35 @@ public partial class SettingsWindow : Window
         box.SelectionChanged += (_, _) => Edit(s => s.Theme =
             box.SelectedIndex == 1 ? OverlayTheme.Soap : OverlayTheme.Zone);
 
-        _refreshers.Add(() => box.SelectedIndex = _host.Current.Theme == OverlayTheme.Soap ? 1 : 0);
-        return Row("Theme", box, null);
+        // A theme is a picture, and this window holds the screensaver off -- so without one here
+        // the only way to see which is selected is to close the window and wait out the delay.
+        var preview = new Image
+        {
+            Width = ThemePreview.Width,
+            Height = ThemePreview.Height,
+            Margin = new Thickness(0, 6, 0, 2),
+            Stretch = System.Windows.Media.Stretch.None,
+            SnapsToDevicePixels = true,
+        };
+
+        _refreshers.Add(() =>
+        {
+            box.SelectedIndex = _host.Current.Theme == OverlayTheme.Soap ? 1 : 0;
+
+            // Null when it could not be drawn, which leaves the space empty rather than showing
+            // a broken image. The dropdown still says which theme is selected.
+            preview.Source = ThemePreview.For(_host.Current.Theme);
+        });
+
+        var stack = new StackPanel();
+        stack.Children.Add(Row("Theme", box, null));
+        stack.Children.Add(new Border
+        {
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+            Margin = new Thickness(180, 0, 0, 0),
+            Child = preview,
+        });
+        return stack;
     }
 
     private static FrameworkElement Row(string label, UIElement control, UIElement? trailing)
