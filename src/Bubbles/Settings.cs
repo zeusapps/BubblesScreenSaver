@@ -199,7 +199,7 @@ public sealed class Settings
     [JsonIgnore]
     public static string FilePath => Path.Combine(Directory, "settings.json");
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
@@ -246,23 +246,72 @@ public sealed class Settings
     [JsonIgnore]
     public bool NeedsDensityMigration => SettingsVersion < DensityVersion;
 
+    /// <summary>Copies every persisted value onto another instance.
+    ///
+    /// By reflection rather than a written-out list, because a settings class gains properties
+    /// and a hand-maintained copy would silently stop carrying the newest one -- which would
+    /// show up as a single setting that cancelling the settings window failed to put back.
+    /// Read/write instance properties are exactly the persisted set: the computed ones have no
+    /// setter and the paths are static.</summary>
+    public void CopyTo(Settings other)
+    {
+        foreach (var property in typeof(Settings).GetProperties())
+            if (property is { CanRead: true, CanWrite: true })
+                property.SetValue(other, property.GetValue(this));
+    }
+
+    /// <summary>The legal range of every clamped setting, in one place.
+    ///
+    /// Named rather than written into <see cref="Clamped"/> as literals because the settings
+    /// window offers these same ranges to its controls. A slider whose maximum disagreed with
+    /// the clamp would appear to accept a value and then have it moved somewhere else, which
+    /// reads as the application losing the setting rather than refusing it.</summary>
+    public static class Range
+    {
+        public const int BubbleCountMin = 1, BubbleCountMax = 400;
+        public const double MinRadiusMin = 4, MinRadiusMax = 1200;
+        public const double MaxRadiusMax = 1600;
+        public const double SpeedMin = 0, SpeedMax = 2000;
+        public const double SpeedVarianceMin = 0, SpeedVarianceMax = 1;
+        public const double OpacityMin = 0.02, OpacityMax = 1;
+        public const double BuoyancyMin = -400, BuoyancyMax = 400;
+        public const double WobbleMin = 0, WobbleMax = 0.5;
+        public const int MaxFpsMin = 0, MaxFpsMax = 480;
+        public const double IdleSecondsMin = 1, IdleSecondsMax = 86400;
+        public const double BlackoutSecondsMax = 86400;
+        public const double DimMin = 0, DimMax = 1;
+        public const double CollectRadiusMin = 0, CollectRadiusMax = 600;
+        public const double UpdateCheckHoursMin = 1, UpdateCheckHoursMax = 720;
+        public const double FadeInSecondsMin = 0, FadeInSecondsMax = 30;
+    }
+
     public Settings Clamped()
     {
-        BubbleCount = Math.Clamp(BubbleCount, 1, 400);
-        MinRadius = Math.Clamp(MinRadius, 4, 1200);
-        MaxRadius = Math.Clamp(MaxRadius, MinRadius, 1600);
-        Speed = Math.Clamp(Speed, 0, 2000);
-        SpeedVariance = Math.Clamp(SpeedVariance, 0, 1);
-        Opacity = Math.Clamp(Opacity, 0.02, 1);
-        Buoyancy = Math.Clamp(Buoyancy, -400, 400);
-        Wobble = Math.Clamp(Wobble, 0, 0.5);
-        MaxFps = Math.Clamp(MaxFps, 0, 480);
-        IdleSeconds = Math.Clamp(IdleSeconds, 1, 86400);
-        BlackoutSeconds = BlackoutSeconds <= 0 ? 0 : Math.Clamp(BlackoutSeconds, IdleSeconds, 86400);
-        Dim = Math.Clamp(Dim, 0, 1);
-        CollectRadius = Math.Clamp(CollectRadius, 0, 600);
-        UpdateCheckHours = Math.Clamp(UpdateCheckHours, 1, 720);
-        FadeInSeconds = Math.Clamp(FadeInSeconds, 0, 30);
+        BubbleCount = Math.Clamp(BubbleCount, Range.BubbleCountMin, Range.BubbleCountMax);
+        MinRadius = Math.Clamp(MinRadius, Range.MinRadiusMin, Range.MinRadiusMax);
+
+        // Floored at MinRadius, not at a constant: a maximum below the minimum describes no
+        // radius at all.
+        MaxRadius = Math.Clamp(MaxRadius, MinRadius, Range.MaxRadiusMax);
+        Speed = Math.Clamp(Speed, Range.SpeedMin, Range.SpeedMax);
+        SpeedVariance = Math.Clamp(SpeedVariance, Range.SpeedVarianceMin, Range.SpeedVarianceMax);
+        Opacity = Math.Clamp(Opacity, Range.OpacityMin, Range.OpacityMax);
+        Buoyancy = Math.Clamp(Buoyancy, Range.BuoyancyMin, Range.BuoyancyMax);
+        Wobble = Math.Clamp(Wobble, Range.WobbleMin, Range.WobbleMax);
+        MaxFps = Math.Clamp(MaxFps, Range.MaxFpsMin, Range.MaxFpsMax);
+        IdleSeconds = Math.Clamp(IdleSeconds, Range.IdleSecondsMin, Range.IdleSecondsMax);
+
+        // Zero means never, and is preserved as such. Any other value is measured from when the
+        // screensaver starts, so it cannot precede it -- which is why the settings window labels
+        // this delay as time after the artifacts appear rather than after the last keypress.
+        BlackoutSeconds = BlackoutSeconds <= 0
+            ? 0
+            : Math.Clamp(BlackoutSeconds, IdleSeconds, Range.BlackoutSecondsMax);
+        Dim = Math.Clamp(Dim, Range.DimMin, Range.DimMax);
+        CollectRadius = Math.Clamp(CollectRadius, Range.CollectRadiusMin, Range.CollectRadiusMax);
+        UpdateCheckHours = Math.Clamp(
+            UpdateCheckHours, Range.UpdateCheckHoursMin, Range.UpdateCheckHoursMax);
+        FadeInSeconds = Math.Clamp(FadeInSeconds, Range.FadeInSecondsMin, Range.FadeInSecondsMax);
         return this;
     }
 }

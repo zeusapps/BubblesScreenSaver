@@ -246,6 +246,11 @@ internal static class Program
         // at them without waiting a minute per change.
         App.WeatherDemo = args.Length >= 1 && args[0] == "--weather-demo";
 
+        // `--settings` opens the settings window on startup. The window is otherwise only
+        // reachable through the tray, which is awkward to drive when checking the layout at a
+        // scaling factor or on a second monitor.
+        App.OpenSettings = args.Length >= 1 && args[0] == "--settings";
+
         Updater.SweepOldBinaries();
 
         // One overlay is plenty. The wait matters: after an update the outgoing process is

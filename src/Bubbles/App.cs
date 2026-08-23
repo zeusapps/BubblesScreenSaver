@@ -18,7 +18,10 @@ public sealed class App : Application
     /// <summary>Walk through every weather state, with the cross-fades between them.</summary>
     public static bool WeatherDemo { get; set; }
 
-    private Settings _settings = new();
+    /// <summary>Set by --settings: open the settings window as soon as the tray is up.</summary>
+    public static bool OpenSettings { get; set; }
+
+    private SettingsHost _host = new(new Settings());
     private OverlayWindow? _overlay;
     private IdleController? _idle;
     private TrayIcon? _tray;
@@ -32,16 +35,19 @@ public sealed class App : Application
         // Nothing here is a "main window" -- the app lives in the tray until told to quit.
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
-        _settings = Settings.Load();
+        // One instance for the life of the process, mutated in place. Everything below holds a
+        // reference to it, so replacing it would leave those holders reading a copy that has
+        // stopped changing.
+        _host = new SettingsHost(Settings.Load());
 
         // Subscribe before anything can ask, so a lock is never missed.
         SessionState.Watch();
 
-        _updater = new Updater(_settings);
+        _updater = new Updater(_host.Current);
 
         // A download staged since last time is swapped in now, before anything is on screen,
         // and the process relaunches into it.
-        if (_settings.AutoUpdate)
+        if (_host.Current.AutoUpdate)
         {
             _updater.Start();
             if (_updater.Staged is not null && _updater.SwapIn())
@@ -52,10 +58,10 @@ public sealed class App : Application
         }
 
         // Anything a previous run left dimmed or with HDR off goes back first.
-        _displays = new DisplayBlackout(_settings);
+        _displays = new DisplayBlackout(_host.Current);
         _displays.RecoverFromCrash();
 
-        _overlay = new OverlayWindow(_settings);
+        _overlay = new OverlayWindow(_host.Current);
         // Whether the screen genuinely arrived at black, as opposed to an Emission that was
         // interrupted on the way there. LeftDark fires for both; the lock must only follow the
         // first, or walking in mid-animation would lock you out of your own machine.
@@ -76,7 +82,7 @@ public sealed class App : Application
 
             // Not if it is already locked: this same path runs when a lock arriving by any
             // other route stands the blackout down, and asking again would be noise.
-            if (reachedBlack && _settings.LockAfterBlackout && !SessionState.Locked)
+            if (reachedBlack && _host.Current.LockAfterBlackout && !SessionState.Locked)
                 SessionLock.Request();
             reachedBlack = false;
         };
@@ -84,8 +90,17 @@ public sealed class App : Application
         _overlay.Show();                       // creates the HWND so the Win32 setup can run
         _overlay.HideBubbles(immediate: true); // ...then gets out of the way until you go idle
 
-        _idle = new IdleController(_settings, _overlay);
-        _tray = new TrayIcon(_settings, _overlay, _idle, _updater, Shutdown);
+        _idle = new IdleController(_host.Current, _overlay);
+
+        // The fan-out lives here now, so that every editor of settings -- the tray menu and the
+        // settings window alike -- reaches all three by one path.
+        _host.Listen(_overlay.Apply);
+        _host.Listen(_idle.Apply);
+        _host.Listen(_updater.Apply);
+
+        _tray = new TrayIcon(_host, _overlay, _idle, _updater, Shutdown);
+
+        if (OpenSettings) _tray.ShowSettings();
 
         if (EmissionDemo)
         {
@@ -215,7 +230,7 @@ public sealed class App : Application
         _updater?.Dispose();
         _tray?.Dispose();
         _overlay?.Close();
-        _settings.Save();
+        _host.Save();
         base.OnExit(e);
     }
 }

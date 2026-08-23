@@ -1,0 +1,353 @@
+using System.Globalization;
+using System.Windows;
+using System.Windows.Controls;
+
+// WinForms is globally imported for the tray icon, and it has a control of its own by most of
+// these names. This file is WPF throughout; the aliases keep the ambiguity from spreading.
+using GroupBox = System.Windows.Controls.GroupBox;
+using CheckBox = System.Windows.Controls.CheckBox;
+using ComboBox = System.Windows.Controls.ComboBox;
+
+using Bubbles.Overlay;
+
+namespace Bubbles.Session;
+
+/// <summary>Every setting the app persists, in one window.
+///
+/// Rows are built from a table rather than written out in XAML, so that a control's range comes
+/// from <see cref="Settings.Range"/> -- the same constants <see cref="Settings.Clamped"/> enforces
+/// -- instead of being restated by hand next to it. A slider whose maximum disagreed with the
+/// clamp would look like it accepted a value and then moved it somewhere else.
+///
+/// Edits apply as they are made, because that is how the app already works: one settings object,
+/// mutated in place, handed to whoever is listening. The cost is that there is no natural way to
+/// back out, so the window keeps a snapshot of how things stood when it opened and Cancel puts it
+/// back.</summary>
+public partial class SettingsWindow : Window
+{
+    private readonly SettingsHost _host;
+    private readonly IdleController _idle;
+    private readonly Settings _opened;
+    private readonly List<Action> _refreshers = new();
+    private readonly List<FrameworkElement> _zoneOnly = new();
+
+    // Refreshing the controls after an edit writes to those controls, which would come straight
+    // back as another edit. The refresh is not optional -- Clamped may have moved the value the
+    // user just set -- so the write has to be ignored rather than avoided.
+    private bool _refreshing;
+
+    public SettingsWindow(SettingsHost host, IdleController idle)
+    {
+        _host = host;
+        _idle = idle;
+        _opened = host.Snapshot();
+
+        InitializeComponent();
+        BuildGroups();
+        RefreshAll();
+
+        // Reading this window without touching the keyboard is exactly what the idle timer
+        // misreads as absence, and covering the window you are configuring the screensaver in
+        // would be the most conspicuous possible way to get that wrong.
+        _idle.AppHold = HoldOff.Everything("the settings window is open");
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _idle.AppHold = HoldOff.None;
+
+        // Once, here, rather than on every edit: dragging a slider would otherwise write the
+        // file a few dozen times a second to no purpose.
+        _host.Save();
+        base.OnClosed(e);
+    }
+
+    private void OnClose(object sender, RoutedEventArgs e) => Close();
+
+    private void OnCancel(object sender, RoutedEventArgs e)
+    {
+        _host.Restore(_opened);
+        Close();
+    }
+
+    private void OnRestoreDefaults(object sender, RoutedEventArgs e)
+    {
+        // Everything except the file's version, which records how the values already on disk are
+        // to be read. Resetting it would re-run the density migration against numbers that were
+        // already written in the new meaning.
+        var version = _host.Current.SettingsVersion;
+
+        Edit(current =>
+        {
+            new Settings().CopyTo(current);
+            current.SettingsVersion = version;
+        });
+    }
+
+    /// <summary>Applies a change and then re-reads every control, because the clamp may have
+    /// moved more than the one value that was touched.</summary>
+    private void Edit(Action<Settings> change)
+    {
+        if (_refreshing) return;
+        _host.Edit(change);
+        RefreshAll();
+    }
+
+    private void RefreshAll()
+    {
+        _refreshing = true;
+
+        try
+        {
+            foreach (var refresh in _refreshers) refresh();
+
+            // Disabled rather than hidden. Offering a setting the current theme ignores invites
+            // you to change it and conclude the app is broken; hiding it makes the window change
+            // shape for reasons that are not on screen.
+            var zone = _host.Current.Theme == OverlayTheme.Zone;
+            foreach (var element in _zoneOnly) element.IsEnabled = zone;
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
+    private void BuildGroups()
+    {
+        Groups.Children.Add(Group("When it starts",
+            Choice("Start the screensaver after", Durations.Idle,
+                   s => s.IdleSeconds, (s, v) => s.IdleSeconds = v),
+
+            // Named as time after the screensaver starts because that is what the clamp
+            // enforces: BlackoutSeconds is floored at IdleSeconds, so a delay set below it does
+            // not mean what it says.
+            Choice("Go to a black screen after a further", Durations.Blackout,
+                   BlackoutGap, (s, v) => s.BlackoutSeconds = v < 0 ? 0 : s.IdleSeconds + v),
+            Note("Measured from the moment the screensaver appears, not from your last keypress."),
+            Check("Ask for a PIN after the black screen",
+                  s => s.LockAfterBlackout, (s, v) => s.LockAfterBlackout = v)));
+
+        Groups.Children.Add(Group("Hold off while",
+            Check("The microphone is in use",
+                  s => s.PauseWhileMicrophoneInUse, (s, v) => s.PauseWhileMicrophoneInUse = v),
+            Check("The camera is in use",
+                  s => s.PauseWhileCameraInUse, (s, v) => s.PauseWhileCameraInUse = v),
+            Check("A full-screen app is running",
+                  s => s.PauseInFullScreen, (s, v) => s.PauseInFullScreen = v),
+            Check("Sound is playing",
+                  s => s.PauseWhileAudioPlaying, (s, v) => s.PauseWhileAudioPlaying = v),
+            Check("A video is playing (music still blacks out)",
+                  s => s.PauseWhileMediaPlaying, (s, v) => s.PauseWhileMediaPlaying = v)));
+
+        Groups.Children.Add(Group("Theme",
+            Themes(),
+            ZoneOnly(Check("Veles artifact detector", s => s.ShowDetector, (s, v) => s.ShowDetector = v)),
+            ZoneOnly(Check("Animate artifacts (costs CPU)", s => s.Animated, (s, v) => s.Animated = v)),
+            ZoneOnly(Check("Emission blackout", s => s.Emission, (s, v) => s.Emission = v)),
+            ZoneOnly(Check("Lightning during an Emission", s => s.Lightning, (s, v) => s.Lightning = v)),
+            ZoneOnly(Check("Weather", s => s.Weather, (s, v) => s.Weather = v)),
+            ZoneOnly(Slide("Collect radius", Settings.Range.CollectRadiusMin,
+                           Settings.Range.CollectRadiusMax,
+                           s => s.CollectRadius, (s, v) => s.CollectRadius = v, "0 DIP"))));
+
+        Groups.Children.Add(Group("What it looks like",
+            Slide("Dim the desktop", Settings.Range.DimMin, Settings.Range.DimMax,
+                  s => s.Dim, (s, v) => s.Dim = v, "P0"),
+            Slide("Brightness", Settings.Range.OpacityMin, Settings.Range.OpacityMax,
+                  s => s.Opacity, (s, v) => s.Opacity = v, "P0"),
+            Slide("How many shapes", Settings.Range.BubbleCountMin, Settings.Range.BubbleCountMax,
+                  s => s.BubbleCount, (s, v) => s.BubbleCount = (int)Math.Round(v), "0"),
+            Note("A density, quoted against a 1920 by 1080 screen. A larger desktop carries proportionally more."),
+            Slide("Smallest", Settings.Range.MinRadiusMin, Settings.Range.MinRadiusMax,
+                  s => s.MinRadius, (s, v) => s.MinRadius = v, "0 DIP"),
+            Slide("Largest", Settings.Range.MinRadiusMin, Settings.Range.MaxRadiusMax,
+                  s => s.MaxRadius, (s, v) => s.MaxRadius = v, "0 DIP"),
+            Slide("Speed", Settings.Range.SpeedMin, Settings.Range.SpeedMax,
+                  s => s.Speed, (s, v) => s.Speed = v, "0 DIP/s"),
+            Slide("Speed variation", Settings.Range.SpeedVarianceMin, Settings.Range.SpeedVarianceMax,
+                  s => s.SpeedVariance, (s, v) => s.SpeedVariance = v, "P0"),
+            Slide("Float upward", Settings.Range.BuoyancyMin, Settings.Range.BuoyancyMax,
+                  s => s.Buoyancy, (s, v) => s.Buoyancy = v, "0"),
+            Note("Zero bounces off the edges; higher values drift up like real bubbles."),
+            Slide("Wobble", Settings.Range.WobbleMin, Settings.Range.WobbleMax,
+                  s => s.Wobble, (s, v) => s.Wobble = v, "0.000"),
+            Slide("Fade in over", Settings.Range.FadeInSecondsMin, Settings.Range.FadeInSecondsMax,
+                  s => s.FadeInSeconds, (s, v) => s.FadeInSeconds = v, "0.0 s"),
+            Slide("Frame rate limit", Settings.Range.MaxFpsMin, Settings.Range.MaxFpsMax,
+                  s => s.MaxFps, (s, v) => s.MaxFps = (int)Math.Round(v), "0 fps"),
+            Note("Zero leaves the frame rate unlimited.")));
+
+        Groups.Children.Add(Group("The screen",
+            Check("Hide the pointer when idle", s => s.HideCursor, (s, v) => s.HideCursor = v),
+            Check("Let clicks through to what is underneath",
+                  s => s.ClickThrough, (s, v) => s.ClickThrough = v),
+            Check("Dim monitor backlights when dark",
+                  s => s.DimMonitorBacklight, (s, v) => s.DimMonitorBacklight = v),
+            Check("Switch HDR off when dark",
+                  s => s.DisableHdrDuringBlackout, (s, v) => s.DisableHdrDuringBlackout = v)));
+
+        Groups.Children.Add(Group("Updates",
+            Check("Check for updates automatically", s => s.AutoUpdate, (s, v) => s.AutoUpdate = v),
+            Slide("Check every", Settings.Range.UpdateCheckHoursMin, Settings.Range.UpdateCheckHoursMax,
+                  s => s.UpdateCheckHours, (s, v) => s.UpdateCheckHours = v, "0 h")));
+
+        // Apart from the everyday controls, and labelled with what it does rather than with what
+        // it is called. Driving the monitor off with SC_MONITORPOWER suspends the whole machine
+        // on a Modern Standby laptop, and with a retry timer behind it that became a wake/sleep
+        // loop -- which is why nothing has offered this setting until now.
+        Groups.Children.Add(Group("Power (advanced)",
+            Check("Put the monitor into standby during a black screen",
+                  s => s.MonitorStandby, (s, v) => s.MonitorStandby = v),
+            Note("On a laptop using Modern Standby this suspends the whole machine rather than "
+                 + "the panel, and can leave it waking and sleeping in a loop. Leave this off "
+                 + "unless you know your machine does not.")));
+    }
+
+    /// <summary>The blackout delay as the window presents it: time after the screensaver
+    /// appears, which is what the clamp actually enforces.
+    ///
+    /// <see cref="Durations.Never"/> rather than zero for "no blackout at all", because zero is
+    /// already taken: a blackout delay equal to the start delay is a real setting, meaning the
+    /// screen goes black the moment the artifacts would have appeared. Folding the two together
+    /// would read a configured blackout back as "never" and switch it off on the way out.</summary>
+    private static double BlackoutGap(Settings s) =>
+        s.BlackoutSeconds <= 0 ? Durations.Never : Math.Max(0, s.BlackoutSeconds - s.IdleSeconds);
+
+    private static GroupBox Group(string header, params FrameworkElement[] rows)
+    {
+        var panel = new StackPanel();
+        foreach (var row in rows) panel.Children.Add(row);
+        return new GroupBox { Header = header, Content = panel };
+    }
+
+    private TextBlock Note(string text) =>
+        new() { Text = text, Style = TryFindResource("Note") as Style };
+
+    private T ZoneOnly<T>(T element) where T : FrameworkElement
+    {
+        _zoneOnly.Add(element);
+        return element;
+    }
+
+    private FrameworkElement Check(string label, Func<Settings, bool> get, Action<Settings, bool> set)
+    {
+        var box = new CheckBox { Content = label };
+        box.Click += (_, _) => Edit(s => set(s, box.IsChecked == true));
+        _refreshers.Add(() => box.IsChecked = get(_host.Current));
+        return box;
+    }
+
+    /// <summary>A slider whose range is the range the clamp enforces, with the value it is
+    /// currently at shown beside it.</summary>
+    private FrameworkElement Slide(string label, double min, double max,
+                            Func<Settings, double> get, Action<Settings, double> set, string format)
+    {
+        var slider = new Slider { Minimum = min, Maximum = max, Margin = new Thickness(0, 0, 8, 0) };
+        var readout = new TextBlock { MinWidth = 62, TextAlignment = TextAlignment.Right };
+
+        slider.ValueChanged += (_, _) => Edit(s => set(s, slider.Value));
+
+        _refreshers.Add(() =>
+        {
+            var value = get(_host.Current);
+            slider.Value = Math.Clamp(value, min, max);
+            readout.Text = value.ToString(format, CultureInfo.CurrentCulture);
+        });
+
+        return Row(label, slider, readout);
+    }
+
+    private FrameworkElement Choice(string label, (string Text, double Value)[] options,
+                             Func<Settings, double> get, Action<Settings, double> set)
+    {
+        var box = new ComboBox();
+        foreach (var option in options) box.Items.Add(option.Text);
+
+        box.SelectionChanged += (_, _) =>
+        {
+            if (box.SelectedIndex >= 0) Edit(s => set(s, options[box.SelectedIndex].Value));
+        };
+
+        _refreshers.Add(() =>
+        {
+            var value = get(_host.Current);
+
+            // The nearest offered duration, so a value typed into settings.json by hand still
+            // selects something rather than leaving the box blank.
+            var best = 0;
+            for (var i = 1; i < options.Length; i++)
+                if (Math.Abs(options[i].Value - value) < Math.Abs(options[best].Value - value))
+                    best = i;
+            box.SelectedIndex = best;
+        });
+
+        return Row(label, box, null);
+    }
+
+    private FrameworkElement Themes()
+    {
+        var box = new ComboBox();
+        box.Items.Add("The Zone — S.T.A.L.K.E.R. artifacts");
+        box.Items.Add("Soap bubbles — the original");
+
+        box.SelectionChanged += (_, _) => Edit(s => s.Theme =
+            box.SelectedIndex == 1 ? OverlayTheme.Soap : OverlayTheme.Zone);
+
+        _refreshers.Add(() => box.SelectedIndex = _host.Current.Theme == OverlayTheme.Soap ? 1 : 0);
+        return Row("Theme", box, null);
+    }
+
+    private static FrameworkElement Row(string label, UIElement control, UIElement? trailing)
+    {
+        var grid = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var text = new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(text, 0);
+        grid.Children.Add(text);
+
+        Grid.SetColumn(control, 1);
+        grid.Children.Add(control);
+
+        if (trailing is not null)
+        {
+            Grid.SetColumn(trailing, 2);
+            grid.Children.Add(trailing);
+        }
+
+        return grid;
+    }
+
+    /// <summary>The durations the delay boxes offer. Every one is inside the range the clamp
+    /// permits, so choosing one can never produce a value that is then moved.</summary>
+    private static class Durations
+    {
+        public static readonly (string Text, double Value)[] Idle =
+        {
+            ("30 seconds", 30),
+            ("1 minute", 60),
+            ("2 minutes", 120),
+            ("5 minutes", 300),
+            ("10 minutes", 600),
+            ("30 minutes", 1800),
+        };
+
+        /// <summary>Stands for "no blackout", which zero cannot: see
+        /// <see cref="BlackoutGap"/>.</summary>
+        public const double Never = -1;
+
+        public static readonly (string Text, double Value)[] Blackout =
+        {
+            ("Never", Never),
+            ("As soon as the screensaver starts", 0),
+            ("1 minute", 60),
+            ("2 minutes", 120),
+            ("5 minutes", 300),
+            ("10 minutes", 600),
+            ("30 minutes", 1800),
+        };
+    }
+}

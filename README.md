@@ -144,9 +144,8 @@ Asking for an Emission from the tray still works while held off; if you ask for 
 
 ## Asking for a PIN
 
-Off by default. Tray → *Ask for a PIN* → *After the black screen*, or
-`"LockAfterBlackout": true`. The tray entry carries its current state in its own label, so
-the menu says which it is without being opened.
+Off by default. Tray → *Settings…* → *When it starts* → *Ask for a PIN after the black
+screen*, or `"LockAfterBlackout": true`.
 
 With it on, the session locks once the screen has actually reached black, so coming back needs
 whatever already unlocks the machine — PIN, password or Windows Hello.
@@ -402,7 +401,7 @@ src/Bubbles/
   Zone/                    the artwork: artifacts, their silhouettes, the VELES, lightning
   Overlay/                 the transparent click-through window the artwork lives in
   Displays/                blackout: HDR, DDC/CI backlight, and what is owed back to each
-  Session/                 idle detection, tray, updater, "are you on a call"
+  Session/                 idle detection, tray, settings window, updater, "are you on a call"
   Interop/                 the Win32 declarations
 tests/Bubbles.Tests/
 ```
@@ -442,7 +441,20 @@ must return *no hash* rather than *some other file's hash*.
 
 ## Settings
 
-`%APPDATA%\Bubbles\settings.json`, re-read via tray → *Reload settings*.
+Everything below is editable in tray → *Settings…*, which shows each value rather than only
+whether it differs from a preset. The file behind it is
+`%APPDATA%\Bubbles\settings.json`, still hand-editable; it is read at startup and written when
+the settings window closes.
+
+The window opens on its own with `--settings`, which is easier than driving the tray when you
+are checking the layout at a scaling factor or on a second monitor:
+
+```
+Bubbles.exe --settings
+```
+
+The screensaver is held off while it is open — reading a settings window without touching the
+keyboard is exactly what the idle timer would otherwise misread as absence.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -608,7 +620,8 @@ antivirus scans, and whatever you left running keeps running. `tools/Watch-IdleC
 per-process CPU over time so you can see what is responsible rather than blaming whatever
 happened to be on screen. On a many-core machine the top figure is a few percent of total CPU, but
 it is real, and it runs while you are away. `Animated: false` keeps every shape and the detector for about a third
-of the cost — tray → *Animate artifacts*. `MaxFps` and `BubbleCount` scale it further.
+of the cost — tray → *Settings…* → *Theme* → *Animate artifacts*. `MaxFps` and `BubbleCount`
+scale it further, and both are in the same window.
 
 The gap is inherent to drawing vector content live: WPF re-rasterises it on every composition
 pass, whereas a bitmap is a single textured quad. Several optimisations did land and are worth

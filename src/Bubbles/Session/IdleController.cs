@@ -35,6 +35,15 @@ public sealed class IdleController : IDisposable
 
     public Stage Current { get; private set; } = Stage.Active;
 
+    /// <summary>A hold-off the application imposes on itself, merged with whatever
+    /// <see cref="UserBusy"/> reports.
+    ///
+    /// Kept here rather than inside <see cref="UserBusy"/> because that reads the state of the
+    /// machine -- the registry, the foreground window, the media sessions -- and is worth keeping
+    /// as a function of the machine alone. Whether this app has a window open is not something
+    /// the machine is being asked about.</summary>
+    public HoldOff AppHold { get; set; } = HoldOff.None;
+
     public event Action<Stage>? StageChanged;
 
     public IdleController(Settings settings, OverlayWindow overlay)
@@ -83,7 +92,9 @@ public sealed class IdleController : IDisposable
 
         // Somebody on a call is not idle, whatever the input timer says. A deliberate request
         // from the tray still wins -- if you ask for it, you get it.
-        var held = _forceBubbles || _forceBlackout ? HoldOff.None : UserBusy.Held(_settings);
+        var held = _forceBubbles || _forceBlackout
+            ? HoldOff.None
+            : UserBusy.Held(_settings).And(AppHold);
 
         if (held.Reason != _heldOffBy)
         {
