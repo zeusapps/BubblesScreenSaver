@@ -99,6 +99,60 @@ public sealed class SettingsRangeTests
         Assert.Equal(0, new Settings { BlackoutSeconds = 0 }.Clamped().BlackoutSeconds);
     }
 
+    // ---- what a slider is allowed to write -----------------------------------------------
+
+    /// <summary>What the settings window does to a slider's raw position before writing it.</summary>
+    private static double Snap(double value, double step) =>
+        Math.Round(Math.Round(value / step, MidpointRounding.AwayFromZero) * step, 6) + 0.0;
+
+    [Theory]
+    // The values a real drag actually left in settings.json, and what they should have been.
+    [InlineData(0.7025083612040077, 0.01, 0.7)]
+    [InlineData(0.44966555183946477, 0.01, 0.45)]
+    [InlineData(-2.398081733190338E-13, 1, 0.0)]
+    [InlineData(0.5000000000000001, 0.01, 0.5)]
+    [InlineData(41.7, 1, 42.0)]
+    [InlineData(0.0449, 0.005, 0.045)]
+    public void A_slider_writes_a_value_somebody_could_have_chosen(
+        double raw, double step, double expected)
+    {
+        Assert.Equal(expected, Snap(raw, step));
+    }
+
+    [Fact]
+    public void Snapping_leaves_no_negative_zero()
+    {
+        // -0 round-trips through JSON as "-0", which looks like a bug in the file.
+        var snapped = Snap(-2.398081733190338E-13, 1);
+
+        Assert.Equal(0.0, snapped);
+        Assert.False(double.IsNegative(snapped));
+    }
+
+    [Fact]
+    public void Snapping_leaves_no_binary_float_residue()
+    {
+        // Dividing and multiplying by a step is what produces 0.45000000000000007; the second
+        // rounding is what removes it. Asserted on the string, because the two are equal as
+        // doubles and only differ once written to the file.
+        Assert.Equal("0.45", Snap(0.4496, 0.01).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Equal("0.7", Snap(0.7025, 0.01).ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Theory]
+    [InlineData(0.01)]
+    [InlineData(0.005)]
+    [InlineData(0.1)]
+    [InlineData(1)]
+    public void A_value_already_on_the_step_is_left_alone(double step)
+    {
+        for (var i = 0; i < 20; i++)
+        {
+            var on = Math.Round(i * step, 6);
+            Assert.Equal(on, Snap(on, step));
+        }
+    }
+
     // ---- carrying settings from one instance to another ----------------------------------
 
     [Fact]

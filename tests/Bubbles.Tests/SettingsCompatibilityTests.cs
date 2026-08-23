@@ -149,6 +149,58 @@ public sealed class SettingsCompatibilityTests
         Assert.Equal(blackout, settings.BlackoutSeconds);
     }
 
+    /// <summary>What the window does when the start delay moves: the gap goes with it.</summary>
+    private static void MoveStartDelay(Settings s, double seconds)
+    {
+        var gap = Gap(s);
+        s.IdleSeconds = seconds;
+        if (gap >= 0) s.BlackoutSeconds = seconds + gap;
+    }
+
+    [Theory]
+    [InlineData(120, 180, 300, 360)]   // a one-minute gap, start delay raised to five
+    [InlineData(120, 180, 60, 120)]    // ...and lowered to one
+    [InlineData(60, 660, 120, 720)]    // the shipped default, start delay doubled
+    [InlineData(120, 120, 600, 600)]   // black as soon as it starts, and it stays that way
+    public void The_gap_follows_the_start_delay(
+        double idle, double blackout, double newIdle, double expected)
+    {
+        var settings = new Settings { IdleSeconds = idle, BlackoutSeconds = blackout }.Clamped();
+        var gap = Gap(settings);
+
+        MoveStartDelay(settings, newIdle);
+        settings.Clamped();
+
+        Assert.Equal(newIdle, settings.IdleSeconds);
+        Assert.Equal(expected, settings.BlackoutSeconds);
+        Assert.Equal(gap, Gap(settings));
+    }
+
+    [Fact]
+    public void Raising_the_start_delay_does_not_quietly_close_the_gap()
+    {
+        // The defect this guards: the clamp floors BlackoutSeconds at IdleSeconds, so setting the
+        // start delay alone used to leave a screen told to go black a minute after the artifacts
+        // going black with them instead.
+        var settings = new Settings { IdleSeconds = 120, BlackoutSeconds = 180 }.Clamped();
+
+        MoveStartDelay(settings, 300);
+        settings.Clamped();
+
+        Assert.Equal(60, settings.BlackoutSeconds - settings.IdleSeconds);
+    }
+
+    [Fact]
+    public void Never_stays_never_when_the_start_delay_moves()
+    {
+        var settings = new Settings { IdleSeconds = 120, BlackoutSeconds = 0 }.Clamped();
+
+        MoveStartDelay(settings, 600);
+        settings.Clamped();
+
+        Assert.Equal(0, settings.BlackoutSeconds);
+    }
+
     [Fact]
     public void Choosing_never_disables_the_blackout()
     {

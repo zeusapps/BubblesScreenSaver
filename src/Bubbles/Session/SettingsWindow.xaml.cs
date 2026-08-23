@@ -9,6 +9,7 @@ using CheckBox = System.Windows.Controls.CheckBox;
 using ComboBox = System.Windows.Controls.ComboBox;
 
 using Bubbles.Overlay;
+using Bubbles.Zone;
 
 namespace Bubbles.Session;
 
@@ -43,6 +44,11 @@ public partial class SettingsWindow : Window
         _opened = host.Snapshot();
 
         InitializeComponent();
+
+        // The same bubble the tray shows. Without it the window gets the generic placeholder in
+        // its title bar and on the taskbar, which reads as somebody else's dialog.
+        Icon = BubbleArt.CreateWindowIcon();
+
         BuildGroups();
         RefreshAll();
 
@@ -117,7 +123,7 @@ public partial class SettingsWindow : Window
     {
         Groups.Children.Add(Group("When it starts",
             Choice("Start the screensaver after", Durations.Idle,
-                   s => s.IdleSeconds, (s, v) => s.IdleSeconds = v),
+                   s => s.IdleSeconds, MoveStartDelay),
 
             // Named as time after the screensaver starts because that is what the clamp
             // enforces: BlackoutSeconds is floored at IdleSeconds, so a delay set below it does
@@ -148,33 +154,33 @@ public partial class SettingsWindow : Window
             ZoneOnly(Check("Lightning during an Emission", s => s.Lightning, (s, v) => s.Lightning = v)),
             ZoneOnly(Check("Weather", s => s.Weather, (s, v) => s.Weather = v)),
             ZoneOnly(Slide("Collect radius", Settings.Range.CollectRadiusMin,
-                           Settings.Range.CollectRadiusMax,
+                           Settings.Range.CollectRadiusMax, 1,
                            s => s.CollectRadius, (s, v) => s.CollectRadius = v, "0 DIP"))));
 
         Groups.Children.Add(Group("What it looks like",
-            Slide("Dim the desktop", Settings.Range.DimMin, Settings.Range.DimMax,
+            Slide("Dim the desktop", Settings.Range.DimMin, Settings.Range.DimMax, 0.01,
                   s => s.Dim, (s, v) => s.Dim = v, "P0"),
-            Slide("Brightness", Settings.Range.OpacityMin, Settings.Range.OpacityMax,
+            Slide("Brightness", Settings.Range.OpacityMin, Settings.Range.OpacityMax, 0.01,
                   s => s.Opacity, (s, v) => s.Opacity = v, "P0"),
-            Slide("How many shapes", Settings.Range.BubbleCountMin, Settings.Range.BubbleCountMax,
+            Slide("How many shapes", Settings.Range.BubbleCountMin, Settings.Range.BubbleCountMax, 1,
                   s => s.BubbleCount, (s, v) => s.BubbleCount = (int)Math.Round(v), "0"),
             Note("A density, quoted against a 1920 by 1080 screen. A larger desktop carries proportionally more."),
-            Slide("Smallest", Settings.Range.MinRadiusMin, Settings.Range.MinRadiusMax,
+            Slide("Smallest", Settings.Range.MinRadiusMin, Settings.Range.MinRadiusMax, 1,
                   s => s.MinRadius, (s, v) => s.MinRadius = v, "0 DIP"),
-            Slide("Largest", Settings.Range.MinRadiusMin, Settings.Range.MaxRadiusMax,
+            Slide("Largest", Settings.Range.MinRadiusMin, Settings.Range.MaxRadiusMax, 1,
                   s => s.MaxRadius, (s, v) => s.MaxRadius = v, "0 DIP"),
-            Slide("Speed", Settings.Range.SpeedMin, Settings.Range.SpeedMax,
+            Slide("Speed", Settings.Range.SpeedMin, Settings.Range.SpeedMax, 1,
                   s => s.Speed, (s, v) => s.Speed = v, "0 DIP/s"),
-            Slide("Speed variation", Settings.Range.SpeedVarianceMin, Settings.Range.SpeedVarianceMax,
+            Slide("Speed variation", Settings.Range.SpeedVarianceMin, Settings.Range.SpeedVarianceMax, 0.01,
                   s => s.SpeedVariance, (s, v) => s.SpeedVariance = v, "P0"),
-            Slide("Float upward", Settings.Range.BuoyancyMin, Settings.Range.BuoyancyMax,
+            Slide("Float upward", Settings.Range.BuoyancyMin, Settings.Range.BuoyancyMax, 1,
                   s => s.Buoyancy, (s, v) => s.Buoyancy = v, "0"),
             Note("Zero bounces off the edges; higher values drift up like real bubbles."),
-            Slide("Wobble", Settings.Range.WobbleMin, Settings.Range.WobbleMax,
+            Slide("Wobble", Settings.Range.WobbleMin, Settings.Range.WobbleMax, 0.005,
                   s => s.Wobble, (s, v) => s.Wobble = v, "0.000"),
-            Slide("Fade in over", Settings.Range.FadeInSecondsMin, Settings.Range.FadeInSecondsMax,
+            Slide("Fade in over", Settings.Range.FadeInSecondsMin, Settings.Range.FadeInSecondsMax, 0.1,
                   s => s.FadeInSeconds, (s, v) => s.FadeInSeconds = v, "0.0 s"),
-            Slide("Frame rate limit", Settings.Range.MaxFpsMin, Settings.Range.MaxFpsMax,
+            Slide("Frame rate limit", Settings.Range.MaxFpsMin, Settings.Range.MaxFpsMax, 1,
                   s => s.MaxFps, (s, v) => s.MaxFps = (int)Math.Round(v), "0 fps"),
             Note("Zero leaves the frame rate unlimited.")));
 
@@ -189,7 +195,7 @@ public partial class SettingsWindow : Window
 
         Groups.Children.Add(Group("Updates",
             Check("Check for updates automatically", s => s.AutoUpdate, (s, v) => s.AutoUpdate = v),
-            Slide("Check every", Settings.Range.UpdateCheckHoursMin, Settings.Range.UpdateCheckHoursMax,
+            Slide("Check every", Settings.Range.UpdateCheckHoursMin, Settings.Range.UpdateCheckHoursMax, 1,
                   s => s.UpdateCheckHours, (s, v) => s.UpdateCheckHours = v, "0 h")));
 
         // Apart from the everyday controls, and labelled with what it does rather than with what
@@ -202,6 +208,22 @@ public partial class SettingsWindow : Window
             Note("On a laptop using Modern Standby this suspends the whole machine rather than "
                  + "the panel, and can leave it waking and sleeping in a loop. Leave this off "
                  + "unless you know your machine does not.")));
+    }
+
+    /// <summary>Moves the start delay, carrying the blackout along behind it.
+    ///
+    /// The window offers the blackout as a gap -- "after a further five minutes" -- so the gap is
+    /// what the user chose and the gap is what must survive. Setting the start delay alone would
+    /// not: the clamp floors `BlackoutSeconds` at `IdleSeconds`, so raising the start delay past
+    /// it quietly closes the gap to nothing, and a screen told to go black five minutes after the
+    /// artifacts would start going black with them.</summary>
+    private static void MoveStartDelay(Settings s, double seconds)
+    {
+        var gap = BlackoutGap(s);
+        s.IdleSeconds = seconds;
+
+        // Never stays never. Any real gap is re-measured from where the screensaver now starts.
+        if (gap >= 0) s.BlackoutSeconds = seconds + gap;
     }
 
     /// <summary>The blackout delay as the window presents it: time after the screensaver
@@ -239,14 +261,28 @@ public partial class SettingsWindow : Window
     }
 
     /// <summary>A slider whose range is the range the clamp enforces, with the value it is
-    /// currently at shown beside it.</summary>
-    private FrameworkElement Slide(string label, double min, double max,
+    /// currently at shown beside it.
+    ///
+    /// <paramref name="step"/> is the granularity the setting is worth having. A slider is a
+    /// continuous control over a few hundred pixels, so without one it writes wherever the thumb
+    /// physically landed -- an opacity of 0.7025083612040077 and a buoyancy of -2.4E-13, which
+    /// are not values anybody chose and are unreadable in settings.json.</summary>
+    private FrameworkElement Slide(string label, double min, double max, double step,
                             Func<Settings, double> get, Action<Settings, double> set, string format)
     {
-        var slider = new Slider { Minimum = min, Maximum = max, Margin = new Thickness(0, 0, 8, 0) };
+        var slider = new Slider
+        {
+            Minimum = min,
+            Maximum = max,
+            Margin = new Thickness(0, 0, 8, 0),
+
+            // Snap the thumb as well as the value, so what is written is what was seen.
+            TickFrequency = step,
+            IsSnapToTickEnabled = true,
+        };
         var readout = new TextBlock { MinWidth = 62, TextAlignment = TextAlignment.Right };
 
-        slider.ValueChanged += (_, _) => Edit(s => set(s, slider.Value));
+        slider.ValueChanged += (_, _) => Edit(s => set(s, Snap(slider.Value, step)));
 
         _refreshers.Add(() =>
         {
@@ -257,6 +293,14 @@ public partial class SettingsWindow : Window
 
         return Row(label, slider, readout);
     }
+
+    /// <summary>The nearest multiple of <paramref name="step"/>.
+    ///
+    /// Rounded a second time because dividing and multiplying by a step leaves binary-float
+    /// residue -- 0.45 comes back as 0.45000000000000007 -- and adding zero so that a negative
+    /// value landing on nothing is written as 0 rather than -0.</summary>
+    private static double Snap(double value, double step) =>
+        Math.Round(Math.Round(value / step, MidpointRounding.AwayFromZero) * step, 6) + 0.0;
 
     private FrameworkElement Choice(string label, (string Text, double Value)[] options,
                              Func<Settings, double> get, Action<Settings, double> set)

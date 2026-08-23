@@ -115,7 +115,35 @@ public static class BubbleArt
     /// <summary>A small, deliberately opaque bubble for the notification area.</summary>
     public static System.Drawing.Icon CreateTrayIcon()
     {
-        const int size = 64;
+        var bmp = RenderBubble(64);
+
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bmp));
+        using var stream = new MemoryStream();
+        encoder.Save(stream);
+        stream.Position = 0;
+
+        using var gdi = new System.Drawing.Bitmap(stream);
+        var handle = gdi.GetHicon();
+        // Clone so the icon survives DestroyIcon on the temporary handle.
+        using var temp = System.Drawing.Icon.FromHandle(handle);
+        var icon = (System.Drawing.Icon)temp.Clone();
+        DestroyIcon(handle);
+        return icon;
+    }
+
+    /// <summary>The same bubble as an <see cref="ImageSource"/>, for the settings window's title
+    /// bar and taskbar button.
+    ///
+    /// Rendered larger than the tray's, because this one is scaled down into several sizes at
+    /// once and a 64-pixel source shows it. It is deliberately the same drawing: an app with two
+    /// different icons looks like two apps.</summary>
+    public static ImageSource CreateWindowIcon() => RenderBubble(256);
+
+    /// <summary>The bubble itself, at whatever size is asked for. Everything is proportional to
+    /// <paramref name="size"/> so the two callers get the same picture.</summary>
+    private static BitmapSource RenderBubble(int size)
+    {
         var centre = new Point(size / 2.0, size / 2.0);
         var r = size / 2.0 - 2;
 
@@ -142,20 +170,8 @@ public static class BubbleArt
 
         var bmp = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
         bmp.Render(visual);
-
-        var encoder = new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(bmp));
-        using var stream = new MemoryStream();
-        encoder.Save(stream);
-        stream.Position = 0;
-
-        using var gdi = new System.Drawing.Bitmap(stream);
-        var handle = gdi.GetHicon();
-        // Clone so the icon survives DestroyIcon on the temporary handle.
-        using var temp = System.Drawing.Icon.FromHandle(handle);
-        var icon = (System.Drawing.Icon)temp.Clone();
-        DestroyIcon(handle);
-        return icon;
+        bmp.Freeze();
+        return bmp;
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
