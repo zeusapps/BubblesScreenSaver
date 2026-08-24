@@ -1,6 +1,7 @@
 using System.IO;
 
 using Bubbles.Keyboard;
+using Bubbles.Zone;
 
 namespace Bubbles.Tests;
 
@@ -78,12 +79,13 @@ public class KeyboardLightingTests : IDisposable
         public void Dispose() { lock (_gate) _disposed = true; }
     }
 
-    private KeyboardLighting Layer(FakeKeyboard keyboard, bool on = true, Action<int>? onConnect = null)
+    private KeyboardLighting Layer(
+        FakeKeyboard keyboard, bool on = true, bool weather = false, Action<int>? onConnect = null)
     {
         var connects = 0;
 
         return new KeyboardLighting(
-            new Settings { KeyboardLighting = on },
+            new Settings { KeyboardLighting = on, KeyboardWeather = weather },
             () =>
             {
                 onConnect?.Invoke(++connects);
@@ -344,6 +346,121 @@ public class KeyboardLightingTests : IDisposable
         Until(() => keyboard.Darks == 1, "the blackout");
 
         Assert.Empty(keyboard.Shown);
+    }
+
+    // ---- the weather ---------------------------------------------------------------------
+
+    /// <summary>A cycle settled on one state, which is what the overlay hands over most of the
+    /// time.</summary>
+    private static WeatherCycle Settled(Weather wanted)
+    {
+        for (var seed = 0; seed < 500; seed++)
+        {
+            var cycle = new WeatherCycle(new Random(seed));
+            if (cycle.Current == wanted && cycle.Outgoing is null) return cycle;
+        }
+
+        throw new InvalidOperationException($"no seed produced settled {wanted}");
+    }
+
+    private static void Weather(KeyboardLighting layer, WeatherCycle cycle, int frames = 120)
+    {
+        for (var i = 0; i < frames; i++) layer.Weather(cycle.Sky, Anomaly.Chemical, striking: false);
+    }
+
+    [Fact]
+    public void WithTheWeatherSettingOffTheSkyReachesNothing()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, on: true, weather: false);
+
+        Weather(layer, Settled(Zone.Weather.Rain));
+        Thread.Sleep(100);
+
+        Assert.Equal(0, keyboard.Opens);
+        Assert.Empty(keyboard.Shown);
+    }
+
+    [Fact]
+    public void TheWeatherNeedsTheMasterSwitchToo()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, on: false, weather: true);
+
+        Weather(layer, Settled(Zone.Weather.Rain));
+        Thread.Sleep(100);
+
+        Assert.Equal(0, keyboard.Opens);
+        Assert.Empty(keyboard.Shown);
+    }
+
+    [Fact]
+    public void RainLightsTheKeys()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, weather: true);
+
+        Weather(layer, Settled(Zone.Weather.Rain));
+
+        Until(() => keyboard.Shown.Any(c => !c.IsBlack), "the weather to reach the keys");
+    }
+
+    [Fact]
+    public void AClearSkyLeavesTheKeysDarkButTheDeviceHeld()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, weather: true);
+
+        Weather(layer, Settled(Zone.Weather.Clear));
+
+        Until(() => keyboard.Opens == 1, "the keyboard to be opened");
+
+        // Opened and owed, so it is genuinely held -- releasing it on every clear spell would
+        // hand it back to the vendor's software, which would light it.
+        Assert.Equal(1, layer.Owed);
+        Assert.All(keyboard.Shown, colour => Assert.True(colour.IsBlack));
+    }
+
+    [Fact]
+    public void AnEmissionTakesTheKeyboardFromTheWeather()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, weather: true);
+
+        var sky = Settled(Zone.Weather.Rain);
+        Weather(layer, sky);
+        Until(() => keyboard.Shown.Any(c => !c.IsBlack), "the weather to reach the keys");
+
+        layer.EmissionBegan();
+
+        // Weather frames arriving alongside an Emission are dropped, not queued behind it.
+        var before = keyboard.Shown.Count;
+        Weather(layer, sky);
+        Thread.Sleep(100);
+
+        Assert.Equal(before, keyboard.Shown.Count);
+    }
+
+    [Fact]
+    public void TheWeatherComesBackAfterABlackout()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, weather: true);
+
+        layer.EmissionBegan();
+        layer.Frame(2, striking: false);
+        Until(() => keyboard.Shown.Count > 0, "the Emission");
+
+        layer.WentDark();
+        Until(() => keyboard.Darks == 1, "the blackout");
+
+        layer.LeftDark();
+        Until(() => layer.Owed == 0, "the hand-back");
+
+        var after = keyboard.Shown.Count;
+        Weather(layer, Settled(Zone.Weather.Fog));
+
+        Until(() => keyboard.Shown.Count > after, "the weather to resume");
     }
 
     [Fact]

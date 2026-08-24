@@ -19,6 +19,28 @@ public enum Weather
     Storm,
 }
 
+/// <summary>A sky at one moment: what is showing, what it is giving way to, and how far
+/// through.
+///
+/// Exists because the weather reaches consumers by two routes -- the live cycle, and the demo
+/// pinning a state to look at it -- and anything downstream that took a <see cref="WeatherCycle"/>
+/// would work in the app and do nothing in the one tool built for judging it.</summary>
+public readonly record struct SkyState(Weather Current, Weather? Outgoing, double Progress)
+{
+    /// <summary>How strongly one state is showing, counting both sides of a cross-fade.
+    ///
+    /// The one place this is worked out. Everything that needs to know whether a storm is
+    /// overhead -- the layer drawing the rain, the lightning, and now the keyboard -- asks
+    /// here, because three answers that could disagree would be three bugs waiting.</summary>
+    public double IntensityOf(Weather state)
+    {
+        var intensity = 0.0;
+        if (Current == state) intensity += Progress;
+        if (Outgoing == state) intensity += 1 - Progress;
+        return Math.Clamp(intensity, 0, 1);
+    }
+}
+
 /// <summary>Which weather is showing, what it is turning into, and when it next changes.
 ///
 /// Pure, and free of any window or clock, so the whole cycle can be asserted directly: that a
@@ -80,13 +102,11 @@ public sealed class WeatherCycle
     ///
     /// One place to ask, because two things need the answer and they must agree: the layer that
     /// draws the rain, and the lightning that has to know whether a storm is overhead.</summary>
-    public double IntensityOf(Weather state)
-    {
-        var intensity = 0.0;
-        if (Current == state) intensity += Progress;
-        if (Outgoing == state) intensity += 1 - Progress;
-        return Math.Clamp(intensity, 0, 1);
-    }
+    public double IntensityOf(Weather state) => Sky.IntensityOf(state);
+
+    /// <summary>The cycle as a plain description of a sky, for anything that should not have to
+    /// know whether the weather is running or pinned.</summary>
+    public SkyState Sky => new(Current, Outgoing, Progress);
 
     /// <summary>True while the cycle is held for an Emission. The sky is already the show; a
     /// weather change underneath it would be a second one.</summary>

@@ -76,6 +76,7 @@ public sealed class App : Application
 
         _overlay.EmissionBegan += _keyboard.EmissionBegan;
         _overlay.EmissionFrame += _keyboard.Frame;
+        _overlay.WeatherFrame += _keyboard.Weather;
 
         _overlay.WentDark += () =>
         {

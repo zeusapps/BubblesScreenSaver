@@ -1,5 +1,6 @@
 using Bubbles.Keyboard;
 using Bubbles.Overlay;
+using Bubbles.Zone;
 
 namespace Bubbles.Tests;
 
@@ -15,7 +16,7 @@ public class SendPolicyTests
     /// <summary>An Emission at the default frame rate, as the render loop would deliver it.</summary>
     private static List<SendDecision> Run(double from, double to, Func<double, bool> striking)
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
         var sent = new List<SendDecision>();
 
         for (var t = from; t <= to; t += 1.0 / 30)
@@ -63,7 +64,7 @@ public class SendPolicyTests
     [Fact]
     public void TheFirstFrameAlwaysGoesOut()
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
 
         Assert.True(policy.Decide(0, striking: false).Send);
     }
@@ -71,7 +72,7 @@ public class SendPolicyTests
     [Fact]
     public void AStrikeIsSentTheMomentItFires()
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
 
         policy.Decide(1.0, striking: false);
 
@@ -91,7 +92,7 @@ public class SendPolicyTests
     [Fact]
     public void ABoltHeldOnScreenDoesNotHoldTheKeysWhite()
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
         var last = default(SendDecision);
 
         // One bolt, on screen for a second and a half without interruption.
@@ -110,7 +111,7 @@ public class SendPolicyTests
     [Fact]
     public void EachBoltFlashesAgain()
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
         var flashes = 0;
 
         // Three separate bolts, each preceded by a clear frame so the edge is real.
@@ -129,7 +130,7 @@ public class SendPolicyTests
     [Fact]
     public void AStrikeFallsBackToTheSkyBehindIt()
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
 
         policy.Decide(3.0, striking: true);
 
@@ -174,7 +175,7 @@ public class SendPolicyTests
     [Fact]
     public void TheFlareIsSentAndIsNotDroppable()
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
 
         // A frame immediately before it, so the floor is freshly against us.
         policy.Decide(EmissionTimeline.FlarePeak - 0.02, striking: false);
@@ -188,7 +189,7 @@ public class SendPolicyTests
     [Fact]
     public void TheFlashIsUrgentFromItsRiseToItsPeak()
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
 
         for (var t = EmissionTimeline.FlarePeak - 0.2; t <= EmissionTimeline.FlarePeak; t += 1.0 / 30)
             Assert.True(policy.Decide(t, striking: false).Urgent, $"the flash at {t:N2}s was droppable");
@@ -197,7 +198,7 @@ public class SendPolicyTests
     [Fact]
     public void TheFlaresDecayIsRationedLikeAnyOtherFade()
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
 
         // A second after the peak the wavefront is on its way back to red, and there is
         // nothing sudden left to protect.
@@ -207,7 +208,7 @@ public class SendPolicyTests
     [Fact]
     public void TheRampIsDroppable()
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
 
         var decision = policy.Decide(3.0, striking: false);
 
@@ -226,7 +227,7 @@ public class SendPolicyTests
     [Fact]
     public void BlackIsSentOnceAndNotRepeated()
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
 
         policy.Decide(EmissionTimeline.DarknessAt, striking: false);
 
@@ -236,7 +237,7 @@ public class SendPolicyTests
     [Fact]
     public void ResetLetsTheNextEmissionStartFromNothing()
     {
-        var policy = new SendPolicy();
+        var policy = SendPolicy.ForEmission();
 
         policy.Decide(EmissionTimeline.DarknessAt, striking: false);
         policy.Reset();
@@ -244,5 +245,140 @@ public class SendPolicyTests
         // Without the reset, the previous Emission's black would suppress this one's, and the
         // keys would sit on whatever they happened to be showing.
         Assert.True(policy.Decide(0, striking: false).Send);
+    }
+
+    // ---- the weather, which moves a hundred times more slowly ---------------------------
+
+    /// <summary>A minute of one weather state at the default frame rate.</summary>
+    private static int WeatherWrites(SendPolicy policy, KeyColor sky, double seconds)
+    {
+        var sent = 0;
+
+        for (var t = 0.0; t < seconds; t += 1.0 / 30)
+            if (policy.DecideWeather(t, sky, striking: false).Send) sent++;
+
+        return sent;
+    }
+
+    [Fact]
+    public void AStillSkyCostsAlmostNothing()
+    {
+        // Fog does not shimmer, so a minute of it is a minute of the same colour. 1800 frames
+        // in, a handful of writes out -- the visible-step rule doing the saving, not the floor.
+        var sent = 0;
+        var policy = SendPolicy.ForWeather();
+
+        for (var t = 0.0; t < 60; t += 1.0 / 30)
+        {
+            var sky = WeatherLight.At(Weather.Fog, 1, Anomaly.Chemical, t);
+            if (policy.DecideWeather(t, sky, striking: false).Send) sent++;
+        }
+
+        Assert.True(sent < 12, $"a minute of still fog cost {sent} writes");
+        Assert.True(sent >= 1, "the weather never reached the keys at all");
+    }
+
+    [Fact]
+    public void RainCostsMoreThanFogAndStillNotMuch()
+    {
+        // Precipitation shimmers, so it genuinely has something to say more often. The bound is
+        // what stops "shimmer" quietly becoming "every frame".
+        var sent = 0;
+        var policy = SendPolicy.ForWeather();
+
+        for (var t = 0.0; t < 60; t += 1.0 / 30)
+        {
+            var sky = WeatherLight.At(Weather.Rain, 1, Anomaly.Chemical, t);
+            if (policy.DecideWeather(t, sky, striking: false).Send) sent++;
+        }
+
+        Assert.True(sent < 1800 / 4, $"a minute of rain cost {sent} writes of 1800 frames");
+        Assert.True(sent > 12, $"the rain only moved {sent} times a minute, which is not a shimmer");
+    }
+
+    [Fact]
+    public void ACrossFadeIsSentAsAFade()
+    {
+        var policy = SendPolicy.ForWeather();
+        var sent = 0;
+
+        // Six seconds of rain giving way to clear, which is the full range the keys can move.
+        for (var t = 0.0; t < WeatherCycle.CrossFade; t += 1.0 / 30)
+        {
+            var progress = t / WeatherCycle.CrossFade;
+            var sky = WeatherLight.At(Weather.Rain, 1 - progress, Anomaly.Chemical);
+
+            if (policy.DecideWeather(t, sky, striking: false).Send) sent++;
+        }
+
+        Assert.True(sent > 2, $"a six-second fade was sent as {sent} steps, which is not a fade");
+    }
+
+    [Fact]
+    public void TheWeatherIsRationedMoreSlowlyThanAnEmission()
+    {
+        // The claim the two floors exist to make. Same colours, same frames, different pace.
+        var sky = WeatherLight.At(Weather.Storm, 1, Anomaly.Chemical);
+
+        var weather = WeatherWrites(SendPolicy.ForWeather(), sky, 12.5);
+        var emission = Run(0, EmissionTimeline.DarknessAt, _ => false).Count;
+
+        Assert.True(weather < emission,
+                    $"the weather cost {weather} writes against the Emission's {emission}");
+    }
+
+    [Fact]
+    public void AnAmbientStrikeStillGetsThrough()
+    {
+        var policy = SendPolicy.ForWeather();
+        var sky = WeatherLight.At(Weather.Storm, 1, Anomaly.Chemical);
+
+        policy.DecideWeather(10, sky, striking: false);
+
+        // A hundredth of a second later: far inside the weather's floor, which would have
+        // swallowed any ordinary change.
+        var decision = policy.DecideWeather(10.01, sky, striking: true);
+
+        Assert.True(decision.Send, "the ambient strike was rationed away");
+        Assert.True(decision.Urgent);
+        Assert.True(Brightness(decision.Colour) > Brightness(sky), "the strike did not brighten the keys");
+    }
+
+    [Fact]
+    public void AnAmbientBoltHeldOnScreenDoesNotHoldTheKeysLit()
+    {
+        // The same failure the Emission had, on the quieter path.
+        var policy = SendPolicy.ForWeather();
+        var sky = WeatherLight.At(Weather.Storm, 1, Anomaly.Chemical);
+        var last = default(SendDecision);
+
+        for (var t = 10.0; t < 11.5; t += 1.0 / 30)
+        {
+            var decision = policy.DecideWeather(t, sky, striking: true);
+            if (decision.Send) last = decision;
+        }
+
+        // Within rounding of the sky itself: the blend rounds each channel, so a flash that
+        // has decayed to nothing can still land a point per channel above where it started.
+        Assert.True(Brightness(last.Colour) <= Brightness(sky) + 3,
+                    $"the keys were left lit at {last.Colour} over a sky of {sky}");
+
+        // And far closer to the sky than to the strike, which is the failure this guards
+        // against. Stated as a gap rather than a number, so raising the ambient ceiling does
+        // not quietly turn it into a different assertion.
+        Assert.True(Math.Abs(Brightness(last.Colour) - Brightness(sky))
+                    < Math.Abs(Brightness(last.Colour) - Brightness(WeatherLight.Strike)));
+    }
+
+    [Fact]
+    public void TheSkyGoingClearAlwaysLands()
+    {
+        var policy = SendPolicy.ForWeather();
+
+        policy.DecideWeather(0, WeatherLight.At(Weather.Fog, 1, Anomaly.Chemical), striking: false);
+
+        // Immediately afterwards, inside the floor. Black is the end of something and has to
+        // arrive, or the keys stay lit over a clear sky.
+        Assert.True(policy.DecideWeather(0.1, KeyColor.Black, striking: false).Send);
     }
 }

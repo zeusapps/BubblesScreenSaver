@@ -32,10 +32,10 @@ public sealed class WeatherSheetTintTests
         {
             if (a >= b) continue;
 
-            var distance = Distance(WeatherBrushes.RainTint(a), WeatherBrushes.RainTint(b));
+            var distance = Distance(WeatherTint.Rain(a), WeatherTint.Rain(b));
 
             Assert.True(distance >= 95,
-                $"{a} rains {WeatherBrushes.RainTint(a)} and {b} rains {WeatherBrushes.RainTint(b)}, " +
+                $"{a} rains {WeatherTint.Rain(a)} and {b} rains {WeatherTint.Rain(b)}, " +
                 $"which are {distance} apart -- too close to tell apart on a dark desktop");
         }
     });
@@ -47,11 +47,11 @@ public sealed class WeatherSheetTintTests
         // something within a few points of the untinted sheet, and the tint showed as nothing.
         foreach (var family in Families)
         {
-            Assert.True(Distance(WeatherBrushes.RainTint(family), WeatherBrushes.RainTint(null)) >= 60,
-                $"{family} rains {WeatherBrushes.RainTint(family)}, near enough the untinted sheet");
+            Assert.True(Distance(WeatherTint.Rain(family), WeatherTint.Rain(null)) >= 60,
+                $"{family} rains {WeatherTint.Rain(family)}, near enough the untinted sheet");
 
-            Assert.True(Saturation(WeatherBrushes.RainTint(family)) >= 0.3,
-                $"{family} rains {WeatherBrushes.RainTint(family)}, which reads as grey");
+            Assert.True(Saturation(WeatherTint.Rain(family)) >= 0.3,
+                $"{family} rains {WeatherTint.Rain(family)}, which reads as grey");
         }
     });
 
@@ -62,11 +62,11 @@ public sealed class WeatherSheetTintTests
         // light instead of adding it, which is a smudge rather than weather.
         static double Luminance(Color c) => (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) / 255;
 
-        var plain = Luminance(WeatherBrushes.RainTint(null));
+        var plain = Luminance(WeatherTint.Rain(null));
 
         foreach (var family in Families)
-            Assert.True(Luminance(WeatherBrushes.RainTint(family)) >= plain * 0.7,
-                $"{family} rains {WeatherBrushes.RainTint(family)}, darker than the desktop it falls on");
+            Assert.True(Luminance(WeatherTint.Rain(family)) >= plain * 0.7,
+                $"{family} rains {WeatherTint.Rain(family)}, darker than the desktop it falls on");
     });
 
     [Fact]
@@ -79,7 +79,7 @@ public sealed class WeatherSheetTintTests
         {
             if (a >= b) continue;
 
-            Assert.True(Distance(WeatherBrushes.FogTint(a), WeatherBrushes.FogTint(b)) >= 95,
+            Assert.True(Distance(WeatherTint.Fog(a), WeatherTint.Fog(b)) >= 95,
                 $"{a} and {b} fog the same colour");
         }
     });

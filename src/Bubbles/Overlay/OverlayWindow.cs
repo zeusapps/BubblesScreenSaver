@@ -124,6 +124,14 @@ public sealed class OverlayWindow : Window
     /// wants to follow the Emission has until the first tremor to get ready.</summary>
     public event Action? EmissionBegan;
 
+    /// <summary>Raised for every frame of ambient weather: the cycle as it stands, the anomaly
+    /// family the sky is tinted by, and whether a distant bolt is on screen this frame.
+    ///
+    /// Not raised while an Emission is running. The Emission is the show, and the weather is
+    /// already suspended underneath it -- see the comment on `_cycle.Suspended`. One rule about
+    /// precedence rather than two that could disagree.</summary>
+    public event Action<SkyState, Anomaly, bool>? WeatherFrame;
+
     /// <summary>Raised for every frame of an Emission: how far into it we are, and whether a
     /// bolt is on screen this frame.
     ///
@@ -520,6 +528,21 @@ public sealed class OverlayWindow : Window
         }
     }
 
+    /// <summary>The weather version. Same rule: a subscriber's failure is its own.</summary>
+    private static void Raise(
+        Action<SkyState, Anomaly, bool>? handler, SkyState sky, Anomaly family,
+        bool striking, string name)
+    {
+        try
+        {
+            handler?.Invoke(sky, family, striking);
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log($"{name} subscriber threw: {ex}");
+        }
+    }
+
     /// <summary>The per-frame version. Same rule: a subscriber's failure is its own.</summary>
     private static void Raise(Action<double, bool>? handler, double time, bool striking, string name)
     {
@@ -876,6 +899,14 @@ public sealed class OverlayWindow : Window
             _weather.Lit = _strikeOnScreen;
 
             _weather.Show(_pinned.Value.To, _pinned.Value.From, _pinned.Value.Progress);
+
+            // The demo is the one place this can be judged by looking, so it has to drive the
+            // keyboard too -- an event raised only on the live path would work everywhere
+            // except where somebody is watching for it.
+            if (!_emitting && !_blackout)
+                Raise(WeatherFrame,
+                      new SkyState(_pinned.Value.To, _pinned.Value.From, _pinned.Value.Progress),
+                      _census.Dominant, _strikeOnScreen, nameof(WeatherFrame));
             return;
         }
 
@@ -891,6 +922,11 @@ public sealed class OverlayWindow : Window
         _weather.Lit = _strikeOnScreen;
 
         _weather.Show(_cycle);
+
+        // The sky the keyboard follows, from the values already in hand -- including the strike,
+        // which TickAmbientLightning has just taken from the one HasStrike it makes.
+        if (!_emitting && !_blackout)
+            Raise(WeatherFrame, _cycle.Sky, _census.Dominant, _strikeOnScreen, nameof(WeatherFrame));
     }
 
     /// <summary>Holds the weather at one state, or part way between two, instead of letting the

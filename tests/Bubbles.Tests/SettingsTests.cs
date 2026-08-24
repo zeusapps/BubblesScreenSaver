@@ -120,6 +120,15 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void Keyboard_weather_is_off_by_default()
+    {
+        // It holds the keyboard for as long as the screensaver is up, not for an Emission, so
+        // it is a second deliberate act on top of a setting that is itself off by default.
+        Assert.False(new Settings().KeyboardWeather);
+        Assert.False(JsonSerializer.Deserialize<Settings>("{}")!.KeyboardWeather);
+    }
+
+    [Fact]
     public void Turning_keyboard_lighting_on_survives_a_round_trip_and_a_clamp()
     {
         var saved = JsonSerializer.Serialize(new Settings { KeyboardLighting = true });

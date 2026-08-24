@@ -214,7 +214,14 @@ public partial class SettingsWindow : Window
                  + "(Settings › Personalization › Dynamic Lighting). While that is off, Armoury "
                  + "Crate owns the keys and nothing will happen — the writes are accepted and "
                  + "discarded with no error. The keyboard is handed back on waking, and whatever "
-                 + "manages your lighting takes it from there.")));
+                 + "manages your lighting takes it from there."),
+            Check("Carry the weather onto the keyboard too",
+                  s => s.KeyboardWeather, (s, v) => s.KeyboardWeather = v),
+            Note("Fog, rain and storms tint the keys the colour the sky is, much fainter than an "
+                 + "Emission so an Emission still comes as a surprise; a clear sky leaves them "
+                 + "unlit. Needs the setting above. Holds the keyboard for as long as the "
+                 + "screensaver is up rather than for an Emission’s twelve seconds, and your own "
+                 + "lighting does not run for that whole time.")));
     }
 
     /// <summary>Moves the start delay, carrying the blackout along behind it.

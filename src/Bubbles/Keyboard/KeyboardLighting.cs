@@ -1,6 +1,7 @@
 using System.IO;
 
 using Bubbles.Displays;
+using Bubbles.Zone;
 
 namespace Bubbles.Keyboard;
 
@@ -52,7 +53,21 @@ internal sealed class KeyboardLighting : IDisposable
     private bool _decided;
 
     /// <summary>Render thread only. Owned there, never read from the worker.</summary>
-    private readonly SendPolicy _policy = new();
+    private readonly SendPolicy _policy = SendPolicy.ForEmission();
+
+    /// <summary>The weather's own policy, with its own floor. Separate from the Emission's so
+    /// that neither one's last frame can ration the other's first -- and because a state that
+    /// held for a minute must not suppress the Emission that interrupts it.</summary>
+    private readonly SendPolicy _weatherPolicy = SendPolicy.ForWeather();
+
+    /// <summary>The weather's clock. Its own, and not the Emission's: the two are rationed at
+    /// different rates and neither is the wall.</summary>
+    private double _weatherClock;
+
+    /// <summary>Whether an Emission is running, so ambient frames arriving alongside one can be
+    /// dropped rather than queued. Set from the Emission's own events, on the same thread they
+    /// are raised on.</summary>
+    private bool _emitting;
 
     public KeyboardLighting(Settings settings)
         : this(settings, () => new AuraKeyboard(), StateFile)
@@ -104,6 +119,7 @@ internal sealed class KeyboardLighting : IDisposable
     {
         if (!_settings.KeyboardLighting) return;
 
+        _emitting = true;
         _policy.Reset();
         Queue(Chore.Open);
     }
@@ -129,13 +145,39 @@ internal sealed class KeyboardLighting : IDisposable
         Queue(decision.Colour, decision.Urgent);
     }
 
+    /// <summary>One frame of ambient weather: the sky as it stands, the family tinting it, and
+    /// whether a distant bolt is on screen.
+    ///
+    /// Silently ignored while an Emission is running. The overlay does not raise this then, and
+    /// this checks anyway, because "the Emission owns the keyboard" is the kind of rule that
+    /// should not depend on one caller remembering it.</summary>
+    public void Weather(SkyState sky, Anomaly family, bool striking)
+    {
+        if (!_settings.KeyboardLighting || !_settings.KeyboardWeather) return;
+
+        if (_emitting || Abandoned) return;
+
+        // A frame's worth, at the rate the overlay draws. The cycle is advanced by the overlay;
+        // this only needs a clock to ration against.
+        _weatherClock += 1.0 / 30;
+
+        var decision = _weatherPolicy.DecideWeather(
+            _weatherClock, WeatherLight.For(sky, family, _weatherClock), striking);
+
+        if (!decision.Send) return;
+
+        Queue(decision.Colour, decision.Urgent);
+    }
+
     /// <summary>The screen has reached black. So does the keyboard: a lit keyboard beside a
     /// screen deliberately taken to black is the one thing that would give the black away.</summary>
     public void WentDark()
     {
         if (!_settings.KeyboardLighting) return;
 
+        _emitting = false;
         _policy.Reset();
+        _weatherPolicy.Reset();
         Queue(Chore.Dark);
     }
 
@@ -143,7 +185,10 @@ internal sealed class KeyboardLighting : IDisposable
     /// setting has been turned off in the meantime -- the debt is not conditional.</summary>
     public void LeftDark()
     {
+        _emitting = false;
         _policy.Reset();
+        _weatherPolicy.Reset();
+        _weatherClock = 0;
 
         // Queued whether or not anything is on the books yet: the worker may still be opening
         // the keyboard, and by the time it gets here the debt will exist. GiveBack is a no-op

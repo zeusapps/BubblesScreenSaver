@@ -79,6 +79,8 @@ public sealed class SettingsCompatibilityTests
         // something to do to somebody who never asked.
         Assert.False(Read().KeyboardLighting);
         Assert.False(Read().Clamped().KeyboardLighting);
+        Assert.False(Read().KeyboardWeather);
+        Assert.False(Read().Clamped().KeyboardWeather);
     }
 
     [Fact]

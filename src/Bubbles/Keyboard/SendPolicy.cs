@@ -23,19 +23,30 @@ internal readonly record struct SendDecision(bool Send, KeyColor Colour, bool Ur
 ///
 /// Kept apart from the hardware, the thread and the settings so that the rule itself can be
 /// checked by handing it a series of frames and counting.</summary>
-internal sealed class SendPolicy
+/// <param name="floor">The minimum interval between ordinary sends, in the seconds of whatever
+/// clock this policy is being driven by.</param>
+internal sealed class SendPolicy(double floor)
 {
     /// <summary>How far a colour must move before it is worth a packet. Keyboard LEDs are
     /// diffused through plastic; steps finer than this are not something anybody sees.</summary>
     private const int VisibleStep = 6;
 
-    /// <summary>The floor between ordinary sends, in Emission seconds. About eight a second,
-    /// which is smooth for a twelve-second ramp.
+    /// <summary>An Emission's floor: about eight sends a second, which is smooth for a colour
+    /// that travels from black to white and back in twelve seconds.
     ///
     /// Measured on the Emission's clock rather than the wall's, because the Emission's clock is
     /// what the colour is a function of. A frame that arrives late has not earned a send by
     /// being late, and one that arrives early has not been denied one for being early.</summary>
-    private const double Floor = 0.12;
+    public static SendPolicy ForEmission() => new(0.12);
+
+    /// <summary>The weather's floor.
+    ///
+    /// It was a second and a half, on the reasoning that a state holds for about a minute and a
+    /// cross-fade takes six seconds. Precipitation shimmers, though, and a shimmer rationed to
+    /// one step every second and a half is not a shimmer -- so the floor is short enough to
+    /// carry it and the visible-step rule does the saving instead: a still sky moves too little
+    /// to send at all, however often it is asked.</summary>
+    public static SendPolicy ForWeather() => new(0.2);
 
     private KeyColor _last;
     private bool _any;
@@ -61,44 +72,77 @@ internal sealed class SendPolicy
         _striking = false;
     }
 
+    /// <summary>One frame of an Emission.</summary>
     public SendDecision Decide(double emissionTime, bool striking)
     {
-        // The rising edge only. A bolt that is merely still on screen has already had its
-        // flash, and treating presence as the trigger is what pinned the keys at white for the
-        // whole of the storm.
-        if (striking && !_striking) _strikeAt = emissionTime;
-        _striking = striking;
+        var flash = Flash(emissionTime, striking, EmissionLight.StrikeFlash);
 
-        var since = emissionTime - _strikeAt;
-        var flashing = since >= 0 && since < EmissionLight.StrikeFlash;
-
-        var colour = flashing
-            ? EmissionLight.WithStrike(emissionTime, since, _strikeAt)
+        var colour = flash > 0
+            ? EmissionLight.WithStrike(emissionTime, emissionTime - _strikeAt, _strikeAt)
             : EmissionLight.At(emissionTime);
 
         // A flash lasts about five frames and every one of them is on the way down. Rationing
         // those is what would leave the keys bright after the bolt had gone.
-        var urgent = flashing || EmissionLight.IsFlare(emissionTime);
+        return Resolve(emissionTime, colour, flash > 0 || EmissionLight.IsFlare(emissionTime));
+    }
 
-        if (!urgent && !Worth(colour, emissionTime)) return default;
+    /// <summary>One frame of ambient weather.
+    ///
+    /// The sky is handed in already computed, rather than being derived here as the Emission's
+    /// is, because it depends on the whole weather cycle and the field's dominant anomaly --
+    /// neither of which this class has any business knowing about.</summary>
+    public SendDecision DecideWeather(double clock, KeyColor sky, bool striking)
+    {
+        var flash = Flash(clock, striking, EmissionLight.StrikeFlash);
+
+        var colour = flash > 0 ? Blend(sky, WeatherLight.Strike, flash) : sky;
+
+        return Resolve(clock, colour, flash > 0);
+    }
+
+    /// <summary>How much of a strike is showing, on the same edge-triggered, decaying rule both
+    /// paths use. Zero when no bolt is fading.</summary>
+    private double Flash(double clock, bool striking, double length)
+    {
+        // The rising edge only. A bolt that is merely still on screen has already had its
+        // flash, and treating presence as the trigger is what pinned the keys at white for the
+        // whole of the storm.
+        if (striking && !_striking) _strikeAt = clock;
+        _striking = striking;
+
+        var since = clock - _strikeAt;
+
+        return since >= 0 && since < length ? EmissionLight.FlashAmount(since) : 0;
+    }
+
+    private SendDecision Resolve(double clock, KeyColor colour, bool urgent)
+    {
+        if (!urgent && !Worth(colour, clock)) return default;
 
         _last = colour;
         _any = true;
-        _at = emissionTime;
+        _at = clock;
 
         return new SendDecision(true, colour, urgent);
     }
 
-    private bool Worth(KeyColor colour, double emissionTime)
+    private static KeyColor Blend(KeyColor from, KeyColor to, double amount) => new(
+        Byte(from.R + (to.R - from.R) * amount),
+        Byte(from.G + (to.G - from.G) * amount),
+        Byte(from.B + (to.B - from.B) * amount));
+
+    private static byte Byte(double value) => (byte)Math.Clamp(Math.Round(value), 0, 255);
+
+    private bool Worth(KeyColor colour, double clock)
     {
         if (!_any) return true;
 
-        // Arriving at black is the end of the Emission and has to actually land, however
-        // gently the last of the red faded out.
+        // Arriving at black has to actually land, however gently the last of the colour faded
+        // out -- it is the end of an Emission, or the sky going clear.
         if (colour.IsBlack) return !_last.IsBlack;
 
         if (colour.DistanceTo(_last) < VisibleStep) return false;
 
-        return emissionTime - _at >= Floor;
+        return clock - _at >= floor;
     }
 }

@@ -144,6 +144,17 @@ public sealed class Settings
     /// beyond a line in the log.</summary>
     public bool KeyboardLighting { get; set; } = false;
 
+    /// <summary>Also carry the ambient weather onto the keyboard, not just the Emission.
+    ///
+    /// Fog, rain and storms tint the keys with the same colour the sky is drawn in, far dimmer
+    /// than an Emission so that an Emission is still an event. A clear sky leaves them unlit.
+    ///
+    /// Needs <see cref="KeyboardLighting"/> as well, and off by default on its own account: it
+    /// holds the keyboard for as long as the screensaver is on screen rather than for the
+    /// twelve seconds of an Emission, and for that whole time the vendor's own lighting does
+    /// not run.</summary>
+    public bool KeyboardWeather { get; set; } = false;
+
     /// <summary>Also ask monitors to enter standby during blackout. Off by default: minimum
     /// backlight is nearly as dark and cannot leave a monitor asleep if something goes wrong.
     /// Some monitors take a second to come back, and a few want their power button.</summary>

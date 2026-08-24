@@ -50,6 +50,14 @@ internal static class EmissionLight
     /// crimson rather than two people's idea of red.</summary>
     private static readonly KeyColor DeepRed = new(0xC4, 0x30, 0x18);
 
+    /// <summary>The total brightness of <see cref="DeepRed"/> -- the level the buildup climbs
+    /// to and the wavefront departs from.
+    ///
+    /// Exposed because the ambient weather is budgeted as a fraction of it. Quoting a fraction
+    /// of a real colour is the only way the cap means anything: "a fifth as bright as the
+    /// Emission" is checkable, where "dim" is not.</summary>
+    public static int PeakBrightness => DeepRed.R + DeepRed.G + DeepRed.B;
+
     /// <summary>The wavefront itself: the deep red pushed toward white.</summary>
     private static readonly KeyColor Flare = new(0xFF, 0xE8, 0xD0);
 
