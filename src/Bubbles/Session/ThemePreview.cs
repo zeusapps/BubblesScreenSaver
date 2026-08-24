@@ -27,8 +27,10 @@ namespace Bubbles.Session;
 /// black would otherwise offer two identical dark rectangles to choose between.</summary>
 internal static class ThemePreview
 {
-    public const double Width = 190;
-    public const double Height = 76;
+    // Sixteen by nine, and big enough to read. The first version was 190 by 76 -- a letterbox
+    // that cropped the artwork and left the shapes too small to tell apart.
+    public const double Width = 248;
+    public const double Height = 140;
 
     /// <summary>How much of the stand-in desktop the dimming takes.
     ///
@@ -117,11 +119,12 @@ internal static class ThemePreview
         // Seeded, like Export's sheets. A preview that differed between openings would read as a
         // defect, and one that differed between machines could not be written down in a spec.
         var rng = new Random(7);
-        var step = Math.Max(1, Artifacts.Count / 5);
+        const int shown = 7;
+        var step = Math.Max(1, Artifacts.Count / shown);
 
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < shown; i++)
         {
-            var size = 30 + rng.NextDouble() * 22;
+            var size = 38 + rng.NextDouble() * 30;
             var visual = new Viewbox
             {
                 Width = size,
@@ -144,9 +147,9 @@ internal static class ThemePreview
         var rng = new Random(7);
         var skins = BubbleArt.Skins;
 
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < 7; i++)
         {
-            var size = 30 + rng.NextDouble() * 26;
+            var size = 40 + rng.NextDouble() * 34;
             var sprite = new Image
             {
                 Source = skins[i % skins.Length],

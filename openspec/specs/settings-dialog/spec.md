@@ -223,9 +223,10 @@ abandoned.
 - **WHEN** settings are created fresh
 - **THEN** `MonitorStandby` SHALL be off
 
-### Requirement: The selected theme is shown, not only named
+### Requirement: The theme is chosen from pictures, not from names
 
-The window SHALL show a picture of the selected theme alongside the control that selects it.
+The window SHALL offer each theme as its own picture, and selecting a theme SHALL be done by
+choosing its picture.
 
 A theme is the one setting in the window that a name describes poorly. Every other setting is a
 quantity or a yes-or-no, and two minutes means two minutes; a theme is a picture, and with the
@@ -234,12 +235,18 @@ wait out the idle delay.
 
 #### Scenario: The window is opened
 - **WHEN** the settings window is opened
-- **THEN** a picture of the currently selected theme SHALL be shown with the theme control
+- **THEN** every theme SHALL be shown as a picture with its name beneath
+- **AND** the selected one SHALL be marked as selected
 
-#### Scenario: The theme is changed
-- **WHEN** a different theme is selected
-- **THEN** the picture SHALL change to that theme
-- **AND** it SHALL do so without the window being closed and reopened
+#### Scenario: A theme is chosen
+- **WHEN** a theme's picture is chosen
+- **THEN** that theme SHALL become the selected theme
+- **AND** the marking SHALL move to it, without the window being closed and reopened
+
+#### Scenario: Choosing without a mouse
+- **WHEN** the theme pictures have keyboard focus
+- **THEN** it SHALL be possible to move between them and select one from the keyboard
+- **AND** the selection SHALL be reported to assistive technology as a selection
 
 ### Requirement: The picture is drawn by the code that draws the screensaver
 
@@ -294,6 +301,25 @@ near-identical dark rectangles to choose between.
 #### Scenario: Settings that would render the artwork invisible
 - **WHEN** the dimming is at its maximum and the brightness at its minimum
 - **THEN** both themes' pictures SHALL remain legible and distinguishable from each other
+
+### Requirement: The form stays readable at any window size
+
+The window SHALL keep its contents to a readable width however wide the window is made, and
+SHALL fill the height it is given.
+
+A form is read in a column. Left to stretch, the delay dropdowns ran the full width of a
+maximized window with their labels stranded at the far left; and a maximum height, which was
+there to size the window to its content, capped the maximized state too, so maximizing produced
+a window that neither filled the screen nor looked deliberate.
+
+#### Scenario: The window is maximized
+- **WHEN** the settings window is maximized on a wide display
+- **THEN** the controls SHALL keep a readable width rather than stretching to the window's
+- **AND** the window SHALL fill the height available to it
+
+#### Scenario: The window is made narrow
+- **WHEN** the window is resized smaller than its contents
+- **THEN** the contents SHALL remain reachable by scrolling
 
 ### Requirement: The picture costs nothing after it is built
 

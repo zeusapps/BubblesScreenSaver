@@ -323,44 +323,92 @@ public partial class SettingsWindow : Window
         return Row(label, box, null);
     }
 
+    /// <summary>The theme, chosen from pictures rather than from a list of names.
+    ///
+    /// A dropdown is the wrong control for this one setting. Every other setting in the window
+    /// is a quantity or a yes-or-no and reads perfectly well as words; a theme is a picture, and
+    /// naming it "The Zone" tells somebody who has not seen it nothing at all. So: a card each,
+    /// image first, with the name underneath as the caption rather than as the control.</summary>
     private FrameworkElement Themes()
     {
-        var box = new ComboBox();
-        box.Items.Add("The Zone — S.T.A.L.K.E.R. artifacts");
-        box.Items.Add("Soap bubbles — the original");
-
-        box.SelectionChanged += (_, _) => Edit(s => s.Theme =
-            box.SelectedIndex == 1 ? OverlayTheme.Soap : OverlayTheme.Zone);
-
-        // A theme is a picture, and this window holds the screensaver off -- so without one here
-        // the only way to see which is selected is to close the window and wait out the delay.
-        var preview = new Image
+        var cards = new StackPanel
         {
-            Width = ThemePreview.Width,
-            Height = ThemePreview.Height,
-            Margin = new Thickness(0, 6, 0, 2),
-            Stretch = System.Windows.Media.Stretch.None,
-            SnapsToDevicePixels = true,
+            Orientation = Orientation.Horizontal,
+
+            // The Zone-only checkboxes follow immediately underneath, and without this they sit
+            // against the cards as though they were part of them.
+            Margin = new Thickness(0, 2, 0, 12),
         };
+        var buttons = new List<(RadioButton Button, OverlayTheme Theme)>();
+
+        foreach (var (theme, title, subtitle) in new[]
+                 {
+                     (OverlayTheme.Zone, "The Zone", "S.T.A.L.K.E.R. artifacts"),
+                     (OverlayTheme.Soap, "Soap bubbles", "The original"),
+                 })
+        {
+            var card = new RadioButton
+            {
+                GroupName = "Theme",
+                Style = (Style)FindResource("ThemeCard"),
+                Content = CardFace(theme, title, subtitle),
+            };
+
+            var chosen = theme;
+            card.Checked += (_, _) => Edit(s => s.Theme = chosen);
+
+            buttons.Add((card, theme));
+            cards.Children.Add(card);
+        }
 
         _refreshers.Add(() =>
         {
-            box.SelectedIndex = _host.Current.Theme == OverlayTheme.Soap ? 1 : 0;
-
-            // Null when it could not be drawn, which leaves the space empty rather than showing
-            // a broken image. The dropdown still says which theme is selected.
-            preview.Source = ThemePreview.For(_host.Current.Theme);
+            foreach (var (button, theme) in buttons)
+                button.IsChecked = _host.Current.Theme == theme;
         });
 
-        var stack = new StackPanel();
-        stack.Children.Add(Row("Theme", box, null));
-        stack.Children.Add(new Border
+        return cards;
+    }
+
+    /// <summary>What sits inside a theme card: the picture, then the name and the line under
+    /// it. The picture is flush to the top edge -- the card clips it to its own corners.</summary>
+    private static FrameworkElement CardFace(OverlayTheme theme, string title, string subtitle)
+    {
+        var face = new StackPanel { Width = ThemePreview.Width };
+
+        // Null when it could not be drawn. The card then shows its name and nothing else, which
+        // is no worse than the dropdown it replaced.
+        var picture = ThemePreview.For(theme);
+
+        if (picture is not null)
         {
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-            Margin = new Thickness(180, 0, 0, 0),
-            Child = preview,
+            face.Children.Add(new Image
+            {
+                Source = picture,
+                Width = ThemePreview.Width,
+                Height = ThemePreview.Height,
+                Stretch = System.Windows.Media.Stretch.None,
+                SnapsToDevicePixels = true,
+            });
+        }
+
+        var caption = new StackPanel { Margin = new Thickness(12, 10, 12, 12) };
+        caption.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 14,
         });
-        return stack;
+        caption.Children.Add(new TextBlock
+        {
+            Text = subtitle,
+            Opacity = 0.65,
+            FontSize = 11,
+            Margin = new Thickness(0, 2, 0, 0),
+        });
+
+        face.Children.Add(caption);
+        return face;
     }
 
     private static FrameworkElement Row(string label, UIElement control, UIElement? trailing)

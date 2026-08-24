@@ -456,10 +456,11 @@ Bubbles.exe --settings
 The screensaver is held off while it is open — reading a settings window without touching the
 keyboard is exactly what the idle timer would otherwise misread as absence.
 
-The Theme group shows a picture of the selected theme, drawn by the same types the overlay
-draws with rather than stored beside them, so it cannot go stale the way a screenshot would. It
-is deliberately fixed: it says *which theme is this*, not what your own dimming and brightness
-look like — the window cannot honestly answer that while it is holding the screensaver off.
+The theme is picked from pictures rather than from a list of names — a card each, drawn by the
+same types the overlay draws with rather than stored beside them, so they cannot go stale the
+way a screenshot would. They are deliberately fixed: they say *which theme is this*, not what
+your own dimming and brightness look like, which the window cannot honestly answer while it is
+holding the screensaver off.
 
 | Key | Default | Meaning |
 |---|---|---|
