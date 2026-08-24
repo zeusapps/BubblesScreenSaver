@@ -23,20 +23,49 @@ jobs:
         run: dotnet test Bubbles.sln -c Release --no-build --nologo
 
       - name: Render the documentation images
+        shell: pwsh
         run: |
           dotnet build Bubbles.sln -c Debug --nologo
-          .\src\Bubbles\bin\Debug\net10.0-windows10.0.17763.0\Bubbles.exe --export docs\images
+          # Into a scratch directory, so the committed images are left alone and the check below
+          # has two sides to compare.
+          $exe = ".\src\Bubbles\bin\Debug\net10.0-windows10.0.17763.0\Bubbles.exe"
+          & $exe --export "$env:RUNNER_TEMP\images"
 
       - name: Fail if the committed images are stale
         shell: pwsh
         run: |
           # Every image in the README is produced by --export, so they must not drift from the
-          # code. The render is deterministic -- the fields these images use are seeded, which
-          # they were not until the drift this check is named for went unnoticed for want of an
-          # exit code.
-          $changed = git status --porcelain docs/images
-          if ($changed) {
-            Write-Host "docs/images differ after re-export:`n$changed"
-            Write-Host "Re-run --export and commit the result."
+          # code.
+          #
+          # Compared by size, not by bytes. PNG bytes are not reproducible across machines --
+          # font rasterisation and the encoder both differ -- so a byte comparison fails on
+          # every run whether or not the artwork changed, which is worth less than no check at
+          # all. Size catches what actually goes wrong here: a picture gaining a row, losing a
+          # panel, or an image added to the exporter and never committed.
+          Add-Type -AssemblyName System.Drawing
+          $stale = @()
+
+          foreach ($rendered in Get-ChildItem "$env:RUNNER_TEMP\images" -Filter *.png) {
+            $committed = Join-Path "docs/images" $rendered.Name
+
+            if (-not (Test-Path $committed)) {
+              $stale += "$($rendered.Name): produced by --export but not committed"
+              continue
+            }
+
+            $a = [System.Drawing.Image]::FromFile($rendered.FullName)
+            $b = [System.Drawing.Image]::FromFile((Resolve-Path $committed))
+            if ($a.Width -ne $b.Width -or $a.Height -ne $b.Height) {
+              $stale += "$($rendered.Name): rendered $($a.Width)x$($a.Height), committed $($b.Width)x$($b.Height)"
+            }
+            $a.Dispose(); $b.Dispose()
+          }
+
+          if ($stale) {
+            Write-Host "docs/images no longer match what --export produces:"
+            $stale | ForEach-Object { Write-Host "  $_" }
+            Write-Host "Re-run: Bubbles.exe --export docs\images, then commit."
             exit 1
           }
+
+          Write-Host "docs/images match the exporter's output."
