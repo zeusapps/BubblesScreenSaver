@@ -132,4 +132,58 @@ public sealed class BubbleFieldRegionsTests
 
         Assert.Equal(before, after);
     }
+
+    // ---- seeding -------------------------------------------------------------------------
+
+    /// <summary>The documentation images are re-rendered on every build and compared against the
+    /// committed ones. That comparison is only meaningful if the same field comes out the same
+    /// way twice, which it did not while the field seeded itself from the clock.</summary>
+    [Fact]
+    public void A_seeded_field_lays_out_the_same_way_twice()
+    {
+        static IReadOnlyList<(double X, double Y, double R)> Lay(int seed)
+        {
+            var settings = new Settings { BubbleCount = 12, MinRadius = 20, MaxRadius = 60 };
+            var field = new BubbleField(settings, new Random(seed));
+            field.SetRegions(new[] { new Rect(0, 0, 800, 600) });
+            field.Resize(new Size(800, 600));
+            return field.Bubbles.Select(b => (b.X, b.Y, b.Radius)).ToList();
+        }
+
+        Assert.Equal(Lay(21), Lay(21));
+    }
+
+    [Fact]
+    public void Different_seeds_lay_out_differently()
+    {
+        static IReadOnlyList<(double X, double Y)> Lay(int seed)
+        {
+            var settings = new Settings { BubbleCount = 12, MinRadius = 20, MaxRadius = 60 };
+            var field = new BubbleField(settings, new Random(seed));
+            field.SetRegions(new[] { new Rect(0, 0, 800, 600) });
+            field.Resize(new Size(800, 600));
+            return field.Bubbles.Select(b => (b.X, b.Y)).ToList();
+        }
+
+        // Export gives its three fields separate seeds so the pictures are not the same
+        // arrangement three times over.
+        Assert.NotEqual(Lay(21), Lay(22));
+    }
+
+    [Fact]
+    public void An_unseeded_field_is_still_its_own()
+    {
+        // The app must keep varying between runs; only the export is pinned.
+        var settings = new Settings { BubbleCount = 24, MinRadius = 20, MaxRadius = 60 };
+
+        static IReadOnlyList<(double X, double Y)> Lay(Settings s)
+        {
+            var field = new BubbleField(s);
+            field.SetRegions(new[] { new Rect(0, 0, 800, 600) });
+            field.Resize(new Size(800, 600));
+            return field.Bubbles.Select(b => (b.X, b.Y)).ToList();
+        }
+
+        Assert.NotEqual(Lay(settings), Lay(settings));
+    }
 }

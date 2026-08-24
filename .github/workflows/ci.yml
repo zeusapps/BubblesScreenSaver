@@ -30,10 +30,13 @@ jobs:
       - name: Fail if the committed images are stale
         shell: pwsh
         run: |
-          # Every image in the README is produced by --export, so they must not drift from
-          # the code. PNG bytes are not reproducible, so compare rendered dimensions instead.
+          # Every image in the README is produced by --export, so they must not drift from the
+          # code. The render is deterministic -- the fields these images use are seeded, which
+          # they were not until the drift this check is named for went unnoticed for want of an
+          # exit code.
           $changed = git status --porcelain docs/images
           if ($changed) {
             Write-Host "docs/images differ after re-export:`n$changed"
-            Write-Host "This is expected when the artwork changes -- re-run --export and commit."
+            Write-Host "Re-run --export and commit the result."
+            exit 1
           }

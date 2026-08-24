@@ -32,13 +32,27 @@ public sealed class Bubble
 /// one. See <see cref="MonitorRegions"/>.</summary>
 public sealed class BubbleField
 {
-    private readonly Random _rng = new();
+    private readonly Random _rng;
     private readonly List<Bubble> _bubbles = new();
     private IReadOnlyList<Rect> _regions = Array.Empty<Rect>();
-    private readonly ShuffledDeck _skins = new();
+    private readonly ShuffledDeck _skins;
     private Settings _settings;
 
-    public BubbleField(Settings settings) => _settings = settings;
+    /// <summary>A field of bubbles.
+    ///
+    /// <paramref name="random"/> is for callers that need the same field twice: the
+    /// documentation images are re-rendered on every build and compared against the committed
+    /// ones, so a field seeded from the clock made three of them differ on every run and the
+    /// comparison meaningless. Left null in the app, where every run should differ.
+    ///
+    /// The deck is seeded from the same source, or every artifact would still arrive in a
+    /// different order.</summary>
+    public BubbleField(Settings settings, Random? random = null)
+    {
+        _settings = settings;
+        _rng = random ?? new Random();
+        _skins = new ShuffledDeck(random);
+    }
 
     public IReadOnlyList<Bubble> Bubbles => _bubbles;
     public Size Bounds { get; private set; }

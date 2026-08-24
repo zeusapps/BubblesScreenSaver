@@ -89,7 +89,7 @@ internal static class Export
             MinRadius = 40,
             MaxRadius = 130,
         };
-        var field = new BubbleField(settings) { SkinCount = Artifacts.Count };
+        var field = new BubbleField(settings, new Random(21)) { SkinCount = Artifacts.Count };
         field.SetRegions(new[] { panel });
         field.Resize(new Size(panel.Width, panel.Height));
 
@@ -224,7 +224,7 @@ internal static class Export
             MinRadius = 50,
             MaxRadius = 140,
         };
-        var field = new BubbleField(settings) { SkinCount = Artifacts.Count };
+        var field = new BubbleField(settings, new Random(22)) { SkinCount = Artifacts.Count };
         field.SetRegions(new[] { shot });
         field.Resize(new Size(w, h));
 
@@ -339,7 +339,7 @@ internal static class Export
 
         // Density is the setting's own doing: a count per baseline screen, dealt by area.
         var settings = new Settings { BubbleCount = 22, MinRadius = 26, MaxRadius = 74 };
-        var field = new BubbleField(settings) { SkinCount = Artifacts.Count };
+        var field = new BubbleField(settings, new Random(23)) { SkinCount = Artifacts.Count };
         field.SetRegions(regions);
         field.Resize(new Size(w, h));
 
