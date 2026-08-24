@@ -192,16 +192,22 @@ public partial class SettingsWindow : Window
             Slide("Check every", Settings.Range.UpdateCheckHoursMin, Settings.Range.UpdateCheckHoursMax, 1,
                   s => s.UpdateCheckHours, (s, v) => s.UpdateCheckHours = v, "0 h")));
 
-        // Apart from the everyday controls, and labelled with what it does rather than with what
-        // it is called. Driving the monitor off with SC_MONITORPOWER suspends the whole machine
-        // on a Modern Standby laptop, and with a retry timer behind it that became a wake/sleep
-        // loop -- which is why nothing has offered this setting until now.
+        // Apart from the everyday controls, and labelled with what it actually does.
+        //
+        // An earlier version of this label claimed the setting could suspend the whole machine
+        // on a Modern Standby laptop. That is untrue, and it described a different mechanism
+        // entirely: the SC_MONITORPOWER broadcast this app abandoned years ago, recorded in the
+        // comments on IdleController and NativeInput. What this setting sends is a DDC/CI power
+        // request to external monitors, which cannot reach the operating system's power state
+        // at all -- and reaches nothing whatever on a machine with only its built-in panel,
+        // since that has no DDC/CI channel to answer on.
         Groups.Children.Add(Group("Power (advanced)",
-            Check("Put the monitor into standby during a black screen",
+            Check("Ask external monitors to sleep during a black screen",
                   s => s.MonitorStandby, (s, v) => s.MonitorStandby = v),
-            Note("On a laptop using Modern Standby this suspends the whole machine rather than "
-                 + "the panel, and can leave it waking and sleeping in a loop. Leave this off "
-                 + "unless you know your machine does not.")));
+            Note("Sent over DDC/CI, so it reaches external monitors only and does nothing for a "
+                 + "laptop's own screen. Minimum backlight is nearly as dark and always comes "
+                 + "back; a monitor asked to sleep can take a moment to wake, and a few want "
+                 + "their power button. Needs “Dim monitor backlights when dark” to be on.")));
     }
 
     /// <summary>Moves the start delay, carrying the blackout along behind it.

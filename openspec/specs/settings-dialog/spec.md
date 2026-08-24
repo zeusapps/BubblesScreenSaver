@@ -202,22 +202,29 @@ window's contents change shape for reasons that are not apparent.
 - **WHEN** the Zone theme is selected in the window
 - **THEN** those settings SHALL become editable without the window being reopened
 
-### Requirement: A setting that can suspend the machine says so
+### Requirement: A setting says what it actually reaches
 
-The window SHALL state, where `MonitorStandby` is offered, that it can suspend the whole
-machine.
+The window SHALL describe a setting by what it does, and SHALL NOT attribute to it an effect
+it cannot have.
 
-The setting drives the monitor into standby through a call that, on a machine using Modern
-Standby, suspends the system rather than the panel.
+`MonitorStandby` is the case that made this worth writing down. It was first offered with a
+warning that it could suspend the whole machine on a Modern Standby laptop. That was untrue,
+and it belonged to a different mechanism: the `SC_MONITORPOWER` broadcast this application
+abandoned years ago. What the setting sends is a DDC/CI power request, which reaches external
+monitors and cannot reach the operating system's power state at all.
 
-It is being surfaced because the window's purpose is that no setting is hidden, but a
-checkbox labelled neutrally would invite exactly the wake/sleep loop that caused it to be
-abandoned.
+A false warning is worse than none. It frightens somebody away from a setting that would have
+suited them, and it spends the credibility the labels need for the warnings that are real.
 
-#### Scenario: The setting is presented
+#### Scenario: A setting with a limited reach
 - **WHEN** the window shows `MonitorStandby`
-- **THEN** its label SHALL state that on a Modern Standby machine it can suspend the system
-- **AND** it SHALL be grouped apart from the everyday controls
+- **THEN** its label SHALL say that it reaches external monitors over DDC/CI
+- **AND** it SHALL say that it does nothing for a machine with only its own built-in panel
+- **AND** it SHALL NOT claim any effect on the machine's power state
+
+#### Scenario: A setting that depends on another
+- **WHEN** the window shows a setting that only takes effect while another is on
+- **THEN** it SHALL name the setting it depends on
 
 #### Scenario: The default is unchanged
 - **WHEN** settings are created fresh
