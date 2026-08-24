@@ -120,6 +120,18 @@ public sealed class OverlayWindow : Window
     /// <summary>Raised the moment the blackout ends.</summary>
     public event Action? LeftDark;
 
+    /// <summary>Raised as an Emission starts, before its first frame is drawn. Anything that
+    /// wants to follow the Emission has until the first tremor to get ready.</summary>
+    public event Action? EmissionBegan;
+
+    /// <summary>Raised for every frame of an Emission: how far into it we are, and whether a
+    /// bolt is on screen this frame.
+    ///
+    /// The strike is handed over rather than left to be asked for. HasStrike is already being
+    /// put to the lightning where the bolt is drawn, and a second caller could get a different
+    /// answer -- see the note on _strikeOnScreen. This is the same value, passed on.</summary>
+    public event Action<double, bool>? EmissionFrame;
+
     private bool IsZone => _settings.Theme == OverlayTheme.Zone;
 
     private bool DetectorWanted => IsZone && _settings.ShowDetector;
@@ -400,10 +412,12 @@ public sealed class OverlayWindow : Window
         }
     }
 
-    // Emission timeline, in seconds from the first tremor.
-    private const double BuildupEnds = 6.5;
-    private const double WaveEnds = 8.4;
-    private const double DarknessAt = 12.5;
+    // Emission timeline, in seconds from the first tremor. The values live in
+    // EmissionTimeline, which the keyboard lighting reads too; these are local names for
+    // them so the keyframes below still read as prose.
+    private const double BuildupEnds = EmissionTimeline.BuildupEnds;
+    private const double WaveEnds = EmissionTimeline.WaveEnds;
+    private const double DarknessAt = EmissionTimeline.DarknessAt;
 
     /// <summary>The plain version: everything simply dims away to black.</summary>
     private void BeginPlainFade()
@@ -435,10 +449,12 @@ public sealed class OverlayWindow : Window
         Keys(_emission, null, (0, 0), (0.94, BuildupEnds), (0.78, WaveEnds), (0, DarknessAt));
 
         // The wavefront itself: a hard flare, gone almost as fast as it came.
-        Keys(_flash, null, (0, 0), (0, BuildupEnds), (0.85, BuildupEnds + 0.3), (0, WaveEnds));
+        Keys(_flash, null, (0, 0), (0, BuildupEnds), (0.85, EmissionTimeline.FlarePeak), (0, WaveEnds));
 
         // A flat timeline on the root, purely to time the end of the Emission.
         Keys(_root, ReachedBlack, (1, 0), (1, DarknessAt));
+
+        Raise(EmissionBegan, nameof(EmissionBegan));
     }
 
     /// <summary>The screen has actually arrived at black. Rendering stops here -- there is
@@ -497,6 +513,19 @@ public sealed class OverlayWindow : Window
         try
         {
             handler?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log($"{name} subscriber threw: {ex}");
+        }
+    }
+
+    /// <summary>The per-frame version. Same rule: a subscriber's failure is its own.</summary>
+    private static void Raise(Action<double, bool>? handler, double time, bool striking, string name)
+    {
+        try
+        {
+            handler?.Invoke(time, striking);
         }
         catch (Exception ex)
         {
@@ -1146,6 +1175,9 @@ public sealed class OverlayWindow : Window
                     _lightningDrawn = striking;
                 }
             }
+
+            // Everything the keyboard needs, from the values already in hand.
+            Raise(EmissionFrame, _emissionTime, _strikeOnScreen, nameof(EmissionFrame));
         }
 
         TickWeather(step);

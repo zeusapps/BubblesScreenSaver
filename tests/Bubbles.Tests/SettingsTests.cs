@@ -111,6 +111,25 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void Keyboard_lighting_is_off_by_default()
+    {
+        // It needs a server almost nobody is running, and turning it on takes the keyboard
+        // away from whatever vendor software owns it. Both are reasons it must be asked for.
+        Assert.False(new Settings().KeyboardLighting);
+        Assert.False(JsonSerializer.Deserialize<Settings>("{}")!.KeyboardLighting);
+    }
+
+    [Fact]
+    public void Turning_keyboard_lighting_on_survives_a_round_trip_and_a_clamp()
+    {
+        var saved = JsonSerializer.Serialize(new Settings { KeyboardLighting = true });
+        var restored = JsonSerializer.Deserialize<Settings>(saved);
+
+        Assert.True(restored!.KeyboardLighting);
+        Assert.True(restored.Clamped().KeyboardLighting);
+    }
+
+    [Fact]
     public void Turning_the_media_signal_off_survives_a_round_trip_and_a_clamp()
     {
         // The escape hatch for a player that misreports itself as permanently playing. If it

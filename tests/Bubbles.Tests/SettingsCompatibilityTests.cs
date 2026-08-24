@@ -71,6 +71,17 @@ public sealed class SettingsCompatibilityTests
     }
 
     [Fact]
+    public void A_file_written_before_the_keyboard_lighting_setting_reads_it_as_off()
+    {
+        // The one thing that must be true of every new setting, and the one that matters most
+        // for this one: an existing installation cannot acquire it by upgrading. Enabling it
+        // takes the keyboard away from whatever vendor software is managing it, which is not
+        // something to do to somebody who never asked.
+        Assert.False(Read().KeyboardLighting);
+        Assert.False(Read().Clamped().KeyboardLighting);
+    }
+
+    [Fact]
     public void Clamping_an_older_file_changes_nothing()
     {
         // Every value in it is already legal, so the clamp must be a no-op. If a bound moved

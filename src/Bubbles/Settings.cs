@@ -132,6 +132,18 @@ public sealed class Settings
     /// on the next run if this one ends badly.</summary>
     public bool DisableHdrDuringBlackout { get; set; } = true;
 
+    /// <summary>Carry an Emission onto the keyboard backlight, over HID.
+    ///
+    /// The sky's red rises on the keys through the buildup, the wavefront flares them white,
+    /// lightning flashes them, and the blackout takes them dark. Whatever the keyboard was
+    /// doing before is put back on waking, and on the next run if this one ends badly.
+    ///
+    /// Off by default. It needs an ASUS Aura keyboard and it needs Windows to own the lighting:
+    /// with Dynamic Lighting switched off, the vendor's own software holds the keys and every
+    /// write is accepted and thrown away, silently. On any other machine nothing happens at all,
+    /// beyond a line in the log.</summary>
+    public bool KeyboardLighting { get; set; } = false;
+
     /// <summary>Also ask monitors to enter standby during blackout. Off by default: minimum
     /// backlight is nearly as dark and cannot leave a monitor asleep if something goes wrong.
     /// Some monitors take a second to come back, and a few want their power button.</summary>

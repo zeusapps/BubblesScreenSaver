@@ -207,7 +207,14 @@ public partial class SettingsWindow : Window
             Note("Sent over DDC/CI, so it reaches external monitors only and does nothing for a "
                  + "laptop's own screen. Minimum backlight is nearly as dark and always comes "
                  + "back; a monitor asked to sleep can take a moment to wake, and a few want "
-                 + "their power button. Needs “Dim monitor backlights when dark” to be on.")));
+                 + "their power button. Needs “Dim monitor backlights when dark” to be on."),
+            Check("Carry an Emission onto the keyboard backlight",
+                  s => s.KeyboardLighting, (s, v) => s.KeyboardLighting = v),
+            Note("ASUS Aura keyboards only, and it needs Windows’ Dynamic Lighting switched on "
+                 + "(Settings › Personalization › Dynamic Lighting). While that is off, Armoury "
+                 + "Crate owns the keys and nothing will happen — the writes are accepted and "
+                 + "discarded with no error. The keyboard is handed back on waking, and whatever "
+                 + "manages your lighting takes it from there.")));
     }
 
     /// <summary>Moves the start delay, carrying the blackout along behind it.

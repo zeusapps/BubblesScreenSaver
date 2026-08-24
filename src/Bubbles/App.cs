@@ -2,6 +2,7 @@ using System.Windows;
 
 using Bubbles.Displays;
 using Bubbles.Interop;
+using Bubbles.Keyboard;
 using Bubbles.Overlay;
 using Bubbles.Session;
 using Bubbles.Zone;
@@ -27,6 +28,7 @@ public sealed class App : Application
     private TrayIcon? _tray;
     private Updater? _updater;
     private DisplayBlackout? _displays;
+    private KeyboardLighting? _keyboard;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -61,15 +63,24 @@ public sealed class App : Application
         _displays = new DisplayBlackout(_host.Current);
         _displays.RecoverFromCrash();
 
+        // And anything it left a keyboard in. Costs nothing on the overwhelming majority of
+        // machines, where there is no record because the feature has never been on.
+        _keyboard = new KeyboardLighting(_host.Current);
+        _keyboard.RecoverFromCrash();
+
         _overlay = new OverlayWindow(_host.Current);
         // Whether the screen genuinely arrived at black, as opposed to an Emission that was
         // interrupted on the way there. LeftDark fires for both; the lock must only follow the
         // first, or walking in mid-animation would lock you out of your own machine.
         var reachedBlack = false;
 
+        _overlay.EmissionBegan += _keyboard.EmissionBegan;
+        _overlay.EmissionFrame += _keyboard.Frame;
+
         _overlay.WentDark += () =>
         {
             reachedBlack = true;
+            _keyboard.WentDark();
             _displays.Enter();
         };
 
@@ -79,6 +90,7 @@ public sealed class App : Application
             // sign-in screen too dark to read on a monitor that had been dimmed over DDC/CI --
             // and the lock screen is the one thing this app cannot draw over to explain itself.
             _displays.Leave();
+            _keyboard.LeftDark();
 
             // Not if it is already locked: this same path runs when a lock arriving by any
             // other route stands the blackout down, and asking again would be noise.
@@ -223,8 +235,10 @@ public sealed class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        // Never leave somebody with a dark monitor, or HDR off, because this app went away.
+        // Never leave somebody with a dark monitor, HDR off, or a black keyboard, because this
+        // app went away.
         _displays?.Leave();
+        _keyboard?.Dispose();
 
         _idle?.Dispose();
         _updater?.Dispose();
