@@ -132,6 +132,59 @@ public static class BubbleArt
         return icon;
     }
 
+    /// <summary>The sizes Windows asks for. The Start Menu, search, Alt-Tab, the taskbar and the
+    /// file properties dialog each pick a different one, and a single size stretched to the rest
+    /// is visibly soft at exactly the places somebody is looking for the application.</summary>
+    private static readonly int[] IconSizes = [16, 24, 32, 48, 64, 128, 256];
+
+    /// <summary>Writes the bubble as a multi-size `.ico`, for the executable's own icon.
+    ///
+    /// The same drawing as the tray's and the window's, at more sizes -- an application with two
+    /// different icons looks like two applications, and this is the one people meet first.
+    ///
+    /// PNG-compressed frames throughout, which Windows has read since Vista and which keeps a
+    /// 256-pixel frame from costing a quarter of a megabyte on its own.</summary>
+    public static void WriteIcon(Stream output)
+    {
+        var frames = IconSizes.Select(size =>
+        {
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(RenderBubble(size)));
+
+            using var buffer = new MemoryStream();
+            encoder.Save(buffer);
+            return buffer.ToArray();
+        }).ToList();
+
+        using var writer = new BinaryWriter(output, System.Text.Encoding.UTF8, leaveOpen: true);
+
+        // ICONDIR: reserved, type 1 (icon), how many images follow.
+        writer.Write((ushort)0);
+        writer.Write((ushort)1);
+        writer.Write((ushort)frames.Count);
+
+        // Every directory entry is 16 bytes, and they all precede the image data.
+        var offset = 6 + (frames.Count * 16);
+
+        for (var i = 0; i < frames.Count; i++)
+        {
+            // 256 is written as 0: the field is one byte and 256 does not fit in it.
+            var size = IconSizes[i];
+            writer.Write((byte)(size >= 256 ? 0 : size));
+            writer.Write((byte)(size >= 256 ? 0 : size));
+            writer.Write((byte)0);   // not a palette
+            writer.Write((byte)0);   // reserved
+            writer.Write((ushort)1); // colour planes
+            writer.Write((ushort)32);
+            writer.Write(frames[i].Length);
+            writer.Write(offset);
+
+            offset += frames[i].Length;
+        }
+
+        foreach (var frame in frames) writer.Write(frame);
+    }
+
     /// <summary>The same bubble as an <see cref="ImageSource"/>, for the settings window's title
     /// bar and taskbar button.
     ///

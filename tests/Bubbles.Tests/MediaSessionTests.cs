@@ -2,6 +2,7 @@ using Windows.Media;
 using Windows.Media.Control;
 
 using Bubbles.Interop;
+using Bubbles.Session;
 
 namespace Bubbles.Tests;
 
@@ -30,6 +31,41 @@ public sealed class MediaSessionTests
     public void Playing_music_is_listened_to_which_is_not_the_same_thing()
     {
         Assert.Equal(MediaKind.Music, MediaSessions.KindOf(Playing, MediaPlaybackType.Music));
+    }
+
+    // ---- and what that means for the stages -------------------------------------------------
+
+    /// <summary>Watching stops everything. Silent footage is the case this exists for, so
+    /// nothing about it may depend on the machine making a sound.</summary>
+    [Fact]
+    public void Something_watched_holds_off_both_stages()
+    {
+        var kind = MediaSessions.KindOf(Playing, MediaPlaybackType.Video);
+        var held = UserBusy.FromMedia(kind, "a player");
+
+        Assert.True(held.Artifacts);
+        Assert.True(held.Blackout);
+        Assert.True(held.Total);
+        Assert.Contains("video", held.Reason);
+    }
+
+    /// <summary>And listening still reaches black, which is the whole reason the two are
+    /// distinguished: an album must not keep an OLED lit for three hours.</summary>
+    [Fact]
+    public void An_album_still_reaches_black()
+    {
+        var kind = MediaSessions.KindOf(Playing, MediaPlaybackType.Music);
+        var held = UserBusy.FromMedia(kind, "Spotify.exe");
+
+        Assert.True(held.Artifacts);
+        Assert.False(held.Blackout);
+        Assert.Contains("music", held.Reason);
+    }
+
+    [Fact]
+    public void Nothing_playing_holds_nothing_off()
+    {
+        Assert.False(UserBusy.FromMedia(MediaKind.None, null).Any);
     }
 
     // ---- what does not -----------------------------------------------------------------------

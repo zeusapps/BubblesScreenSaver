@@ -110,13 +110,9 @@ internal static class UserBusy
         // the case that defeated every other signal here.
         if (settings.PauseWhileMediaPlaying)
         {
-            var playing = MediaSessions.Playing(out var player);
+            var media = FromMedia(MediaSessions.Playing(out var player), player);
 
-            if (playing == MediaKind.Video)
-                return HoldOff.Everything($"video is playing in {player}");
-
-            if (playing == MediaKind.Music)
-                return HoldOff.ArtifactsOnly($"music is playing in {player}");
+            if (media.Any) return media;
         }
 
         if (settings.PauseWhileAudioPlaying &&
@@ -127,6 +123,20 @@ internal static class UserBusy
 
         return HoldOff.None;
     }
+
+    /// <summary>What a media session means for the stages, separated from reading the machine
+    /// so it can be tested. Watching stops everything; listening only withholds the artifacts,
+    /// so that an album cannot keep an OLED lit for three hours.
+    ///
+    /// Which of the two a browser's "music" is has already been decided by then -- see
+    /// <see cref="MediaSessions.KindOf"/> -- so a clip watched in a tab arrives here as video
+    /// and is named as video, which is what somebody reading the log needs to see.</summary>
+    internal static HoldOff FromMedia(MediaKind playing, string? player) => playing switch
+    {
+        MediaKind.Video => HoldOff.Everything($"video is playing in {player}"),
+        MediaKind.Music => HoldOff.ArtifactsOnly($"music is playing in {player}"),
+        _ => HoldOff.None,
+    };
 
     private static readonly SoundWatch Sound = new();
 

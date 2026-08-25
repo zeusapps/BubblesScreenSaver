@@ -15,6 +15,12 @@
     <RepositoryUrl>https://github.com/zeusapps/BubblesScreenSaver</RepositoryUrl>
     <RootNamespace>Bubbles</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The same bubble the tray and the settings window draw, rendered to a multi-size
+         .ico by the export-icon switch. Committed rather than built, because the binary
+         that renders it does not exist when the build needs it; regenerate and commit
+         the result if the artwork changes. Without this the Start Menu, search, Alt-Tab
+         and the taskbar all show the generic default. -->
+    <ApplicationIcon>bubbles.ico</ApplicationIcon>
     <!-- Do NOT set InvariantGlobalization: WPF text layout constructs CultureInfo("en")
          while measuring a TextBlock, which throws under invariant mode. -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

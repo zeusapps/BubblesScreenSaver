@@ -12,7 +12,13 @@ using Bubbles.Zone;
 namespace Bubbles;
 
 /// <summary>`Bubbles.exe --export &lt;dir&gt;` renders the artwork to PNGs and exits.
-/// Lets the visuals be reviewed without taking over somebody's screen.</summary>
+/// Lets the visuals be reviewed without taking over somebody's screen.
+///
+/// Everything written here is compared against `docs/images` by CI, so an image added to this
+/// exporter and not committed fails the build. The executable's icon is deliberately *not*
+/// written here -- it lives at `src/Bubbles/bubbles.ico`, is produced by
+/// `Bubbles.exe --export-icon &lt;file&gt;`, and is a build input rather than documentation. CI
+/// does not guard it, so regenerate and commit it by hand when the bubble artwork changes.</summary>
 internal static class Export
 {
     public static void Run(string directory)

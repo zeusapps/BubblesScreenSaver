@@ -28,7 +28,14 @@ internal enum MediaKind
 /// audio track existing, on the volume, or on which device the sound goes to.
 ///
 /// Not every player registers one -- mpv and some games do not -- so this is an additional
-/// signal rather than a replacement for the meter.</summary>
+/// signal rather than a replacement for the meter.
+///
+/// **Measured on 2026-08-25: Edge registers no session at all while a YouTube clip plays**,
+/// neither in a tab nor in a picture-in-picture window. A session appears while playback is
+/// *paused*, reporting Music, and vanishes when it starts. So on that machine this class
+/// contributes nothing for the browser, and the audio meter carries the case alone -- which
+/// leaves muted or silent browser video with no cover at all, the very gap this was introduced
+/// to close. Worth re-measuring elsewhere before building on what a browser reports.</summary>
 internal static class MediaSessions
 {
     // RequestAsync is the only asynchronous part of the API; once held, the session list and
@@ -128,6 +135,8 @@ internal static class MediaSessions
 
                 var kind = Classify(session, out _);
 
+                // Both what it said and what it was taken to mean. A browser saying "Music" and
+                // being read as Video is the disagreement this line exists to make visible.
                 lines.Add($"  {session.SourceAppUserModelId,-40} {status,-10} {type,-8} -> {kind}");
             }
         }
@@ -172,7 +181,14 @@ internal static class MediaSessions
     /// reads true nearly always, and stops the screensaver running at all.
     ///
     /// Image is a slideshow or album art, and is also the shape a stale session takes, so it is
-    /// not a reason either. Nor is a session that declines to say what it is playing.</summary>
+    /// not a reason either. Nor is a session that declines to say what it is playing.
+    ///
+    /// The type is taken at face value. A rule reading a browser's "music" as video was written
+    /// here and reverted: measured on 2026-08-25, Edge registers no session at all while a
+    /// YouTube clip plays -- in a tab or in a picture-in-picture window -- so the rule could
+    /// never fire, while its cost was certain for any player that does report music. What made
+    /// it look justified was a *paused* session reading `Music`, which is not evidence about
+    /// how playback reports. See the note on this class about who actually covers that case.</summary>
     internal static MediaKind KindOf(
         GlobalSystemMediaTransportControlsSessionPlaybackStatus status,
         Windows.Media.MediaPlaybackType? type)

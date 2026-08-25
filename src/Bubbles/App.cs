@@ -59,6 +59,11 @@ public sealed class App : Application
             }
         }
 
+        // An installation registered to start with Windows before there was a Start Menu entry
+        // to go with it gets one now. A file existence check on every machine that already has
+        // one, and nothing at all on a machine that does not start with Windows.
+        Session.Startup.Reconcile();
+
         // Anything a previous run left dimmed or with HDR off goes back first.
         _displays = new DisplayBlackout(_host.Current);
         _displays.RecoverFromCrash();

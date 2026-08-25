@@ -29,6 +29,12 @@ public sealed class IdleClockTests
         private long _sinceInput;
         private double _last;
 
+        /// <param name="alreadyIdle">How long the machine had been sitting before this clock
+        /// existed. The system counter outlives the process, so this is what a run started
+        /// after an update, a crash, or a login onto a machine left at the lock screen is
+        /// handed on its very first tick.</param>
+        public Ticker(double alreadyIdle = 0) => _sinceInput = (long)(alreadyIdle * 1000);
+
         public double Idle => _last;
 
         /// <param name="seconds">Wall-clock seconds to advance.</param>
@@ -141,6 +147,80 @@ public sealed class IdleClockTests
         var idle = new Ticker().Run(12 * Minute, heldOff: true).Idle;
 
         Assert.True(idle < blackoutAfter);
+    }
+
+    // ---- a run cannot have been away before it started ------------------------------------
+
+    /// <summary>The bug this bound exists for. Restarting the application on a machine that had
+    /// been sitting for two and a half minutes gave the artifacts stage 1.2 seconds of its
+    /// configured two minutes, and the blackout swallowed it -- with nothing held off at all.</summary>
+    [Fact]
+    public void A_run_that_starts_into_an_idle_machine_begins_its_countdown_at_zero()
+    {
+        AssertSeconds(0, new Ticker(alreadyIdle: 40 * Minute).Run(0.4).Idle);
+    }
+
+    [Fact]
+    public void The_countdown_then_runs_from_the_start_of_the_run()
+    {
+        var ticker = new Ticker(alreadyIdle: 40 * Minute);
+
+        AssertSeconds(2 * Minute, ticker.Run(2 * Minute).Idle);
+    }
+
+    /// <summary>The stage the fault actually cost. With a two-minute artifacts stage and a
+    /// blackout at two and a half, a run starting one second short of the blackout must still
+    /// owe the whole of both.</summary>
+    [Fact]
+    public void The_artifacts_stage_is_not_skipped_by_a_restart()
+    {
+        const double artifactsAfter = 2 * Minute;
+        const double blackoutAfter = 2.5 * Minute;
+
+        var ticker = new Ticker(alreadyIdle: blackoutAfter - 1);
+
+        Assert.True(ticker.Run(1).Idle < artifactsAfter,
+            "the run began past its own artifacts threshold");
+
+        AssertSeconds(artifactsAfter, ticker.Run(artifactsAfter - 1).Idle);
+        Assert.True(ticker.Idle < blackoutAfter, "the blackout arrived with the artifacts");
+
+        Assert.True(ticker.Run(Minute).Idle >= blackoutAfter);
+    }
+
+    /// <summary>The bound is temporary by construction. Once the run has been going for longer
+    /// than the machine has been quiet, it stops binding and never binds again.</summary>
+    [Fact]
+    public void Once_the_run_outlives_the_system_timer_the_bound_stops_applying()
+    {
+        // Started into an idle machine; somebody came back, touched the mouse, and left again.
+        var ticker = new Ticker(alreadyIdle: 40 * Minute).Run(Minute).Input().Run(3 * Minute);
+
+        AssertSeconds(3 * Minute, ticker.Idle);
+    }
+
+    /// <summary>It is a ceiling, not a floor. A run far older than the last keypress reports the
+    /// keypress, which is what would break if the two were ever combined the other way round.</summary>
+    [Fact]
+    public void The_bound_never_reports_more_than_the_time_since_the_last_input()
+    {
+        var ticker = new Ticker().Run(10 * Minute).Input().Run(Minute);
+
+        AssertSeconds(Minute, ticker.Idle);
+    }
+
+    /// <summary>The two corrections compose. Running past the point where the bound binds, the
+    /// hold-off subtraction has to behave exactly as it does without it -- a call discounted in
+    /// full, and the whole delay owed again afterwards.</summary>
+    [Fact]
+    public void The_hold_off_discount_is_unchanged_once_the_bound_is_out_of_the_way()
+    {
+        var ticker = new Ticker(alreadyIdle: 40 * Minute).Run(Minute).Input();
+
+        ticker.Run(40 * Minute, heldOff: true);
+        AssertSeconds(0, ticker.Idle);
+
+        AssertSeconds(5 * Minute, ticker.Run(5 * Minute).Idle);
     }
 
     // ---- input always wins ---------------------------------------------------------------

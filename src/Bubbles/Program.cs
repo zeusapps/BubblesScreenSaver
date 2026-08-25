@@ -39,6 +39,21 @@ internal static class Program
             return;
         }
 
+        // `--export-icon <file>` writes the executable's own icon from the same drawing the
+        // tray uses. Kept out of `--export`, which renders the README images and is compared
+        // against docs/images by CI -- an .ico appearing there would read as a stale export.
+        //
+        // The icon is committed rather than generated during the build, because it is a build
+        // input: the binary that renders it does not exist yet when it is needed. Re-run this
+        // and commit the result if the artwork changes.
+        if (args.Length >= 2 && args[0] == "--export-icon")
+        {
+            using var file = System.IO.File.Create(args[1]);
+            Bubbles.Zone.BubbleArt.WriteIcon(file);
+            Console.WriteLine($"wrote {args[1]}");
+            return;
+        }
+
         // `--check-update` runs one check and reports, without starting the overlay. Handy
         // for testing the update path, and for anyone who would rather drive it themselves.
         if (args.Length >= 1 && args[0] == "--check-update")
