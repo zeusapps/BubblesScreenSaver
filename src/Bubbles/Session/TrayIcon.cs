@@ -22,7 +22,6 @@ public sealed class TrayIcon : IDisposable
     private readonly ToolStripMenuItem _update;
     private readonly ToolStripMenuItem _blackoutNow;
     private readonly ToolStripMenuItem _pause;
-    private readonly ToolStripMenuItem _startup;
     private SettingsWindow? _settingsWindow;
 
     public TrayIcon(SettingsHost host, OverlayWindow overlay, IdleController idle, Updater updater,
@@ -36,8 +35,6 @@ public sealed class TrayIcon : IDisposable
 
         _update = new ToolStripMenuItem("Check for updates", null, async (_, _) => await CheckForUpdates());
         _pause = new ToolStripMenuItem("Pause", null, (_, _) => TogglePause()) { CheckOnClick = true };
-        _startup = new ToolStripMenuItem("Start with Windows", null,
-            (_, _) => Startup.Set(!Startup.IsEnabled));
 
         var menu = new ContextMenuStrip { ShowImageMargin = false };
         menu.Items.Add(new ToolStripMenuItem($"Bubbles v{Updater.Current.ToString(3)}") { Enabled = false });
@@ -49,7 +46,6 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Item("Settings…", ShowSettings));
         menu.Items.Add(_update);
-        menu.Items.Add(_startup);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Item("Exit", () => _exit()));
         menu.Opening += (_, _) => Refresh();
@@ -91,9 +87,6 @@ public sealed class TrayIcon : IDisposable
 
     private void Refresh()
     {
-        // Read from the system rather than from anything stored: startup can be turned off in
-        // Task Manager, and a tick we maintained ourselves would go on claiming otherwise.
-        _startup.Checked = Startup.IsEnabled;
         RefreshUpdateItem();
 
         // The command describes what it is about to do. Under the Zone with Emissions on, that

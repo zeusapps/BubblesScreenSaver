@@ -115,6 +115,63 @@ internal sealed class StartupRegistration
     }
 }
 
+/// <summary>The settings window's startup control, as a decision separated from the checkbox.
+///
+/// Every other control in that window is a lens onto one `Settings` object, which is what makes
+/// the window's promises work: the snapshot taken on opening holds every value, Cancel puts the
+/// snapshot back, and the file is written once on the way out. This one is not. Startup lives in
+/// the registry and the Start Menu, it can be turned off from Task Manager while the window is
+/// open, and storing a copy of it here would disagree with the machine the first time that
+/// happened.
+///
+/// So the window's rules are restated for it rather than inherited, and they are not symmetric:
+///
+/// <code>
+/// Cancel            puts it back    -- Cancel means undo what you did in this window
+/// Restore defaults  leaves it       -- that means put the screensaver back, and whether the
+///                                      application starts with Windows is not one of the
+///                                      screensaver's defaults
+/// </code>
+///
+/// Restore-defaults needs no code here at all, which is the point of writing it down: startup is
+/// not in `Settings`, so the defaults path cannot reach it even by accident. The omission is
+/// load-bearing and reads as an oversight otherwise.</summary>
+internal sealed class StartupControl
+{
+    private readonly Func<bool> _isEnabled;
+    private readonly Action<bool> _set;
+    private readonly bool _onOpen;
+
+    /// <param name="isEnabled">How to read the machine. Asked every time rather than cached,
+    /// because it can change while the window is open.</param>
+    /// <param name="set">How to change it. Takes effect at once, as the tray entry it replaces
+    /// did -- there is nothing to defer until the window closes.</param>
+    internal StartupControl(Func<bool> isEnabled, Action<bool> set)
+    {
+        _isEnabled = isEnabled;
+        _set = set;
+        _onOpen = isEnabled();
+    }
+
+    /// <summary>What the machine says right now.</summary>
+    public bool Current => _isEnabled();
+
+    public void Toggle(bool on) => _set(on);
+
+    /// <summary>Puts it back to how it was when the window opened. Returns whether it wrote.
+    ///
+    /// Only when the value actually moved. Cancelling a window in which the box was never
+    /// touched must not write to somebody's registry and Start Menu on its way out, and the end
+    /// state is identical either way -- so this is the difference that has to be asserted on.</summary>
+    public bool Cancel()
+    {
+        if (_isEnabled() == _onOpen) return false;
+
+        _set(_onOpen);
+        return true;
+    }
+}
+
 /// <summary>Registers the app in the per-user Run key, so it comes back after a reboot, and
 /// in the per-user Start Menu, so it can be found again after it has been closed.</summary>
 internal static class Startup

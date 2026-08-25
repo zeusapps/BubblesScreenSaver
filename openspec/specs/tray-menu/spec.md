@@ -14,24 +14,24 @@ is done often and poor for what is set once.
 
 ### Requirement: Every entry the menu constructs is reachable
 
-Every menu entry the application builds SHALL be added to the menu.
+Every `ToolStripMenuItem` the tray menu constructs SHALL be added to the menu or to one of its
+submenus. An entry SHALL NOT be built, wired to an action, and then left unreachable.
 
-This is not a truism. `Check for updates` and `Start with Windows` are both constructed in
-`TrayIcon`, given working handlers, and refreshed on every menu opening -- and neither is ever
-added, so no user has been able to reach either. The code that maintains them runs regardless,
-which is why the omission went unnoticed.
+An entry the menu builds and does not show is a command the user cannot reach and the compiler
+cannot warn about.
 
-#### Scenario: The update entry
-- **WHEN** the tray menu is opened
-- **THEN** an entry for checking for updates SHALL be present
-
-#### Scenario: The startup entry
-- **WHEN** the tray menu is opened
-- **THEN** an entry for starting with Windows SHALL be present, ticked when startup is enabled
+The menu SHALL NOT rely on a check mark to convey the state of an entry. It is constructed
+without an image margin, which is where a check mark is drawn, so an entry whose meaning
+depends on being ticked shows nothing at all. Where an entry has a state worth reading, it
+SHALL be moved to the settings window or SHALL say its state in its own label.
 
 #### Scenario: No entry is built and abandoned
 - **WHEN** the menu is constructed
 - **THEN** every entry constructed SHALL be added to the menu or to one of its submenus
+
+#### Scenario: An entry whose state cannot be shown
+- **WHEN** an entry's meaning would depend on a check mark
+- **THEN** it SHALL NOT be presented that way in the menu
 
 ### Requirement: The menu offers commands, and configuration lives in the window
 
@@ -43,17 +43,22 @@ what is done often and a poor container for what is set once. It cannot show a v
 has no room -- the two properties that caused settings to be crowded into a `Theme` submenu
 alongside the pointer, the backlight and HDR, and caused two entries to be dropped entirely.
 
+That rule SHALL admit no exceptions on the grounds of habit. Whether the application starts
+with Windows is set once and read rarely, and it stayed on the menu after everything else of
+its kind had left, where its state could not be seen at all.
+
 No entry SHALL be more than one level deep.
 
 #### Scenario: What the menu offers
 - **WHEN** the tray menu is opened
 - **THEN** it SHALL offer starting the screensaver, blacking the screen, pausing, opening the
-  settings window, checking for updates, starting with Windows, and exiting
+  settings window, checking for updates, and exiting
 
 #### Scenario: Configuration has left the menu
 - **WHEN** the tray menu is opened
 - **THEN** it SHALL NOT offer submenus for the start delay, the blackout delay, dimming, the
   PIN, hold-off reasons, the theme, or the appearance nudges
+- **AND** it SHALL NOT offer starting with Windows
 
 #### Scenario: Nothing is buried
 - **WHEN** the tray menu is opened
@@ -106,81 +111,6 @@ update has already been downloaded.
 #### Scenario: A check is in progress
 - **WHEN** a check for updates has been started from the menu and has not yet finished
 - **THEN** the entry SHALL indicate that a check is under way
-
-### Requirement: The startup entry reflects the system, not a stored setting
-
-The startup entry SHALL be ticked according to the operating system's state, read when the
-menu opens, rather than according to a value the application stores.
-
-Whether the application starts with Windows is recorded by the system and can be changed
-outside the application entirely.
-
-The per-user `Run` value SHALL remain the authority on that state. Where other things are
-written to the machine alongside it, their presence or absence SHALL NOT change what the entry
-shows.
-
-#### Scenario: Startup was disabled outside the application
-- **WHEN** startup is disabled by some other means and the tray menu is then opened
-- **THEN** the entry SHALL show as not ticked
-
-#### Scenario: The registration is the authority
-- **WHEN** the application is registered to start with Windows
-- **AND** something else the registration writes has been removed from the machine
-- **THEN** the entry SHALL still show as ticked
-
-### Requirement: Registering to start with Windows also makes the application findable
-
-Where the system registers itself to start with Windows, it SHALL also write a Start Menu entry
-naming the application, so that it can be found by name in Windows search and started again
-after it has been exited.
-
-Windows search indexes Start Menu shortcuts and does not index the `Run` key, so an application
-that writes only the latter cannot be found by name at all. There is no installer here to have
-created an entry, and somebody who exits from the tray otherwise has no way to start the
-application again short of knowing its path.
-
-Where the system removes that registration, it SHALL remove the entry as well, leaving nothing
-behind that it did not leave behind before.
-
-Both SHALL be written for the current user only, requiring no elevation and touching no other
-account.
-
-Failure to write or remove the entry SHALL be silent and SHALL NOT prevent the registration
-itself, or the application, from proceeding. There is nowhere to report it to from a tray
-toggle, and a machine that refuses a shortcut is not a machine that should fail to run the
-screensaver.
-
-An installation already registered to start with Windows SHALL have the entry reconciled
-without being asked, so that the entry reaches installations that predate this requirement.
-Reconciling SHALL be idempotent.
-
-#### Scenario: Turning startup on
-- **WHEN** the system is asked to start with Windows
-- **THEN** a Start Menu entry naming the application SHALL exist
-- **AND** it SHALL point at the running executable
-
-#### Scenario: Turning startup off
-- **WHEN** the system is asked not to start with Windows
-- **THEN** the Start Menu entry SHALL NOT exist
-- **AND** the `Run` value SHALL NOT exist
-
-#### Scenario: An installation that predates this
-- **WHEN** the application starts and is already registered to start with Windows
-- **AND** no Start Menu entry exists
-- **THEN** the entry SHALL be written
-
-#### Scenario: Reconciling twice
-- **WHEN** the entry is reconciled on a machine where it already exists and is correct
-- **THEN** nothing SHALL change
-
-#### Scenario: Not registered to start with Windows
-- **WHEN** the application starts and is not registered to start with Windows
-- **THEN** no Start Menu entry SHALL be written
-
-#### Scenario: The machine refuses the entry
-- **WHEN** writing the Start Menu entry fails
-- **THEN** the registration SHALL still be recorded
-- **AND** the application SHALL continue without reporting an error
 
 ### Requirement: The application is recognisable where it is found
 

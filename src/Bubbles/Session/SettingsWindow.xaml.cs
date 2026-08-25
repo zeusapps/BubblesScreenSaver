@@ -23,6 +23,12 @@ public partial class SettingsWindow : Window
     private readonly SettingsHost _host;
     private readonly IdleController _idle;
     private readonly Settings _opened;
+
+    /// <summary>Startup, which is not a setting. It lives in the registry and the Start Menu
+    /// rather than in `settings.json`, so it is not in <see cref="_opened"/> and the window's
+    /// rules are restated for it -- see <see cref="StartupControl"/>.</summary>
+    private readonly StartupControl _startup =
+        new(() => Startup.IsEnabled, enabled => Startup.Set(enabled));
     private readonly List<Action> _refreshers = new();
     private readonly List<FrameworkElement> _zoneOnly = new();
 
@@ -67,11 +73,24 @@ public partial class SettingsWindow : Window
     private void OnCancel(object sender, RoutedEventArgs e)
     {
         _host.Restore(_opened);
+
+        // Startup separately, because it is not in the snapshot -- and only if it actually
+        // moved, so a window that never touched the box writes nothing to the machine on its
+        // way out.
+        _startup.Cancel();
+
         Close();
     }
 
     private void OnRestoreDefaults(object sender, RoutedEventArgs e)
     {
+        // Startup is deliberately untouched, and the omission is load-bearing: this resets what
+        // the screensaver looks like, and whether the application starts with Windows is not one
+        // of the screensaver's defaults. It is reached by somebody who dislikes what is on
+        // screen, and silently unregistering their autostart -- taking their Start Menu entry
+        // with it -- is a far longer reach than this action implies. Nothing here can do it by
+        // accident either, since startup is not in Settings at all.
+        //
         // Everything except the file's version, which records how the values already on disk are
         // to be read. Resetting it would re-run the density migration against numbers that were
         // already written in the new meaning.
@@ -187,6 +206,19 @@ public partial class SettingsWindow : Window
             Check("Switch HDR off when dark",
                   s => s.DisableHdrDuringBlackout, (s, v) => s.DisableHdrDuringBlackout = v)));
 
+        // Startup is the one control here that changes Windows rather than this application, so
+        // the note says what it writes and what it leaves behind. It was on the tray menu until
+        // now, where its tick rendered nothing at all -- the menu is built without the image
+        // margin that a check mark is drawn in.
+        Groups.Children.Add(Group("When Windows starts",
+            MachineCheck("Start Bubbles when I sign in",
+                         () => Startup.IsEnabled, enabled => Startup.Set(enabled)),
+            Note("Registers the app to start at sign-in, and puts an entry in the Start Menu so "
+                 + "you can find it by name in search. Turning this off removes both. It changes "
+                 + "Windows rather than a setting here, so it takes effect at once, it is not "
+                 + "written to settings.json, and “Restore defaults” leaves it alone — though "
+                 + "Cancel still puts it back.")));
+
         Groups.Children.Add(Group("Updates",
             Check("Check for updates automatically", s => s.AutoUpdate, (s, v) => s.AutoUpdate = v),
             Slide("Check every", Settings.Range.UpdateCheckHoursMin, Settings.Range.UpdateCheckHoursMax, 1,
@@ -282,6 +314,28 @@ public partial class SettingsWindow : Window
         var box = new CheckBox { Content = label };
         box.Click += (_, _) => Edit(s => set(s, box.IsChecked == true));
         _refreshers.Add(() => box.IsChecked = get(_host.Current));
+        return box;
+    }
+
+    /// <summary>A checkbox over the operating system rather than over `settings.json`.
+    ///
+    /// It joins `_refreshers` like every other control, so it re-reads the machine whenever the
+    /// window refreshes -- startup can be turned off from Task Manager while this is open. But
+    /// it does not go through <see cref="Edit"/>: there is no setting to mutate, nothing for the
+    /// clamp to move, and nothing for the save on close to write.</summary>
+    private FrameworkElement MachineCheck(string label, Func<bool> get, Action<bool> set)
+    {
+        var box = new CheckBox { Content = label };
+
+        box.Click += (_, _) =>
+        {
+            if (_refreshing) return;
+
+            set(box.IsChecked == true);
+            RefreshAll();
+        };
+
+        _refreshers.Add(() => box.IsChecked = get());
         return box;
     }
 
