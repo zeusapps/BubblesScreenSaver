@@ -84,11 +84,11 @@ the deliverable.
 - [x] 5.4 Confirm the hold-off path is untouched -- covered by the mapping tests, since Edge
       registers no session on this machine and there is no desktop music player on it to
       produce one.
-- [ ] 5.5 Search "Bubbles" in the Start Menu and find it; toggle startup off from the tray and
+- [x] 5.5 Search "Bubbles" in the Start Menu and find it; toggle startup off from the tray and
       confirm both the entry and the `Run` value are gone; toggle back on and confirm both
       return.
 - [x] 5.7 With the YouTube clip actually playing in picture-in-picture, confirm what holds the
       overlay off. It is the audio meter, not the media session; recorded in the proposal.
-- [ ] 5.8 Confirm the icon shows in search, on the taskbar and in Alt-Tab.
+- [x] 5.8 Confirm the icon shows in search, on the taskbar and in Alt-Tab.
 - [x] 5.6 Check `LockAfterBlackout` before any run that will reach black, and say so rather
       than locking somebody's session to prove a point.
