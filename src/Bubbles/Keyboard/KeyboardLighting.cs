@@ -18,7 +18,9 @@ namespace Bubbles.Keyboard;
 /// *Failure is decided once.* Most machines running this application have no keyboard this can
 /// talk to, so the failure path is the common path. One attempt, one line in the log, and then
 /// silence for the rest of the session -- no retry timer, no dialog, and no second attempt in
-/// the middle of the next Emission.
+/// the middle of the next Emission. That governs the *search*: a keyboard found once and given
+/// back at the end of a blackout is opened again for the next one, which is a fresh loan rather
+/// than a second guess.
 ///
 /// *What is borrowed is written down first.* A note goes to disk before a single colour is
 /// sent. A monitor left dim is visible and can be fixed from its own buttons; a keyboard left
@@ -49,8 +51,17 @@ internal sealed class KeyboardLighting : IDisposable
     private bool _queuedUrgent;
 
     // Worker thread only, past construction.
+
+    /// <summary>The keyboard, once one has been found. Kept across a hand-back, because a
+    /// device that has been given back is an empty object rather than an absent one, and
+    /// opening it again is how the next Emission gets its keyboard. Null means there is none
+    /// to be had: either the search found nothing, or the one that was found has gone.</summary>
     private IKeyboardDevice? _device;
-    private bool _decided;
+
+    /// <summary>Whether the one search of the session has been made. It says nothing about
+    /// whether the device is in hand -- that question goes to the device, which is the only
+    /// thing that knows.</summary>
+    private bool _searched;
 
     /// <summary>Render thread only. Owned there, never read from the worker.</summary>
     private readonly SendPolicy _policy = SendPolicy.ForEmission();
@@ -226,11 +237,14 @@ internal sealed class KeyboardLighting : IDisposable
 
     // ---- the once-per-session decision ----------------------------------------------------
 
-    /// <summary>Whether the one attempt to find a keyboard has been made and came to
-    /// nothing.</summary>
+    /// <summary>Whether there is no keyboard to send to for the rest of this session.
+    ///
+    /// Two ways to get here, and they are the same afterwards: the one search found nothing, or
+    /// a keyboard that was found stopped accepting writes. Either way the ramp stops computing
+    /// colours for nobody.</summary>
     private bool Abandoned
     {
-        get { lock (_gate) return _decided && _device is null; }
+        get { lock (_gate) return _searched && _device is null; }
     }
 
     // ---- the worker ---------------------------------------------------------------------
@@ -321,8 +335,11 @@ internal sealed class KeyboardLighting : IDisposable
                         GiveBack(chore == Chore.Recover ? "a previous run" : "awake");
                         break;
 
+                    // What Show and GoDark return is acted on rather than dropped. A refused
+                    // write means the device has let go of itself, and a layer that ignores
+                    // that goes on sending colours nobody will ever see.
                     case Chore.Dark:
-                        if (Ensure()) _device!.GoDark();
+                        if (Ensure() && !_device!.GoDark()) Lost("the blackout");
                         break;
 
                     // Opening is not an alternative to showing a colour, it is what has to
@@ -330,8 +347,9 @@ internal sealed class KeyboardLighting : IDisposable
                     // first frame are a frame apart -- and handling only one of them dropped
                     // the opening colour of every Emission.
                     default:
-                        if ((chore == Chore.Open || colour is not null) && Ensure() && colour is { } wanted)
-                            _device!.Show(wanted);
+                        if ((chore == Chore.Open || colour is not null) && Ensure() && colour is { } wanted
+                            && !_device!.Show(wanted))
+                            Lost("a colour");
                         break;
                 }
             }
@@ -352,39 +370,103 @@ internal sealed class KeyboardLighting : IDisposable
         }
     }
 
-    /// <summary>The once-per-session decision.
+    /// <summary>A keyboard in hand, or nothing to be done.
     ///
-    /// The record of what is owed is written before this returns true, so there is no window
-    /// in which the keyboard has been found, is about to be changed, and nothing on disk says
-    /// what it was.</summary>
+    /// The once-per-session decision is the *search*, not the holding. Those were one field
+    /// once, and a keyboard given back at the end of a blackout left this answering yes for the
+    /// rest of the process while every write went to a closed handle -- so the second blackout
+    /// of a session left the keys lit beside a black screen, in silence. What is cached now is
+    /// only that the looking has been done:
+    ///
+    /// <code>
+    /// _searched  _device              meaning                            here
+    /// ---------  -------------------  ---------------------------------  ----------
+    /// false      null                 not looked yet                     search
+    /// true       { IsOpen: true }     in hand                            true
+    /// true       { IsOpen: false }    found once, handed back            open again
+    /// true       null                 looked and found nothing, or lost  false
+    /// </code>
+    ///
+    /// Opening a keyboard that has already been found is not a retry of a decision made
+    /// against. The search succeeded; the device is known to be there; it was handed back
+    /// because the screen woke up, which is the feature working.
+    ///
+    /// The record of what is owed is written before this returns true -- on every loan, not
+    /// just the first -- so there is no window in which the keyboard has been taken, is about
+    /// to be changed, and nothing on disk says so.</summary>
     private bool Ensure()
     {
-        if (_decided) return _device is not null;
+        if (_device is { IsOpen: true }) return true;
 
-        lock (_gate) _decided = true;
+        if (_searched && _device is null) return false;
 
-        var device = _open();
+        // Either nothing has been looked for yet, or something was found and has since been
+        // given back. The same object serves both: opening it is how it comes back.
+        var device = _device ?? _open();
+
         var record = device.Open();
 
         if (record is null)
         {
             device.Dispose();
+
+            lock (_gate)
+            {
+                _searched = true;
+                _device = null;
+            }
+
             Diagnostics.Log("keyboard lighting: no keyboard this session; staying quiet");
             return false;
         }
 
         _owed.Remember([record]);
 
-        lock (_gate) _device = device;
+        lock (_gate)
+        {
+            _searched = true;
+            _device = device;
+        }
 
         return true;
+    }
+
+    /// <summary>The keyboard has stopped answering. Said once, and then dropped for the rest of
+    /// the session.
+    ///
+    /// Nulling the device makes <see cref="Abandoned"/> true, which stops the ramp computing
+    /// colours for something that is gone. Deliberately not a reopen: a device that accepts a
+    /// handle and refuses every write would otherwise loop open-fail-open-fail once per
+    /// rationed colour. Failure is decided once here, as everywhere else in this class.</summary>
+    private void Lost(string what)
+    {
+        IKeyboardDevice? gone;
+
+        lock (_gate)
+        {
+            gone = _device;
+            if (gone is null) return;
+
+            _device = null;
+        }
+
+        gone.Dispose();
+
+        Diagnostics.Log($"keyboard lighting: {what} did not reach the keyboard; quiet for the rest of this session");
     }
 
     /// <summary>Hands back everything owed, and forgets only what the keyboard confirmed.
     ///
     /// Will open a device of its own if there is not one, which is not a retry of a decision
     /// already made against: there is only something owed here because a keyboard was found and
-    /// changed earlier. A session that never reached one owes nothing and does nothing.</summary>
+    /// changed earlier. A session that never reached one owes nothing and does nothing.
+    ///
+    /// A device that is held but has already let go of its handle -- one that stopped answering
+    /// mid-Emission -- is restored through the object that is already here rather than a new
+    /// one, because there is nothing to open: restoring is letting go, and it has let go.
+    ///
+    /// This closes the device it restores. Nothing here says so afterwards, and nothing needs
+    /// to: the next <see cref="Ensure"/> asks the device rather than this method.</summary>
     private void GiveBack(string why)
     {
         if (_owed.Count == 0) return;

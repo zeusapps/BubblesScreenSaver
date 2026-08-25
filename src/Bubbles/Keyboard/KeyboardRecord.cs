@@ -28,8 +28,19 @@ internal sealed class KeyboardRecord
 internal interface IKeyboardDevice : IDisposable
 {
     /// <summary>Finds a keyboard and takes hold of it. Returns null if there is no keyboard
-    /// attached, or none this knows how to talk to.</summary>
+    /// attached, or none this knows how to talk to.
+    ///
+    /// May be called again on a device that has let go, which is the ordinary way a second
+    /// Emission gets a keyboard back after the first handed it in.</summary>
     KeyboardRecord? Open();
+
+    /// <summary>Whether the device is in hand right now.
+    ///
+    /// Asked rather than remembered, because this changes without anyone above being told: a
+    /// hand-back, a refused write and an error all let go of the device. A caller that cached
+    /// the answer from <see cref="Open"/> would go on writing to a handle that has been closed,
+    /// and every one of those writes fails in silence.</summary>
+    bool IsOpen { get; }
 
     /// <summary>Sets the whole keyboard to one colour.</summary>
     bool Show(KeyColor colour);
@@ -38,6 +49,9 @@ internal interface IKeyboardDevice : IDisposable
     bool GoDark();
 
     /// <summary>Gives the keyboard back. False leaves the debt standing, to be retried on the
-    /// next path that ends an Emission.</summary>
+    /// next path that ends an Emission.
+    ///
+    /// Giving the keyboard back is letting go of it, so a device that has been restored is no
+    /// longer open and must be opened again before anything else is sent to it.</summary>
     bool Restore(KeyboardRecord record);
 }

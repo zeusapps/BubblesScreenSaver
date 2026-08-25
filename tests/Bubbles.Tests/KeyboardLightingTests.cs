@@ -23,7 +23,13 @@ public class KeyboardLightingTests : IDisposable
     }
 
     /// <summary>A keyboard that records what it was asked to do and never fails, unless it is
-    /// built to.</summary>
+    /// built to.
+    ///
+    /// As unforgiving as the real one about the two things that matter. Restoring closes it,
+    /// because on the hardware giving the keyboard back *is* letting go of the handle -- a fake
+    /// that stayed open through a hand-back hid a defect for as long as it existed, since no
+    /// test could reach the state the application spent every second blackout in. And writes
+    /// can be made to fail, because they do.</summary>
     private sealed class FakeKeyboard(bool present = true, bool restores = true) : IKeyboardDevice
     {
         private readonly object _gate = new();
@@ -36,16 +42,23 @@ public class KeyboardLightingTests : IDisposable
         private int _darks;
         private int _restores;
         private bool _disposed;
+        private bool _open;
+        private bool _refusing;
 
         public int Opens { get { lock (_gate) return _opens; } }
         public int Darks { get { lock (_gate) return _darks; } }
         public int Restores { get { lock (_gate) return _restores; } }
         public bool Disposed { get { lock (_gate) return _disposed; } }
+        public bool IsOpen { get { lock (_gate) return _open; } }
 
         public IReadOnlyList<KeyColor> Shown
         {
             get { lock (_gate) return _shown.ToList(); }
         }
+
+        /// <summary>Makes every write from here on fail, as a keyboard that has been unplugged
+        /// does. Like the real device, refusing a write also lets go of it.</summary>
+        public void RefuseWrites() { lock (_gate) _refusing = true; }
 
         public KeyboardRecord? Open()
         {
@@ -54,29 +67,45 @@ public class KeyboardLightingTests : IDisposable
                 _opens++;
                 if (!present) return null;
 
+                _open = true;
+
                 return new KeyboardRecord { Key = "0B05:19B6", Name = "Fake Keyboard" };
             }
         }
 
         public bool Show(KeyColor colour)
         {
-            lock (_gate) _shown.Add(colour);
-            return true;
+            lock (_gate)
+            {
+                if (_refusing || !_open) { _open = false; return false; }
+
+                _shown.Add(colour);
+                return true;
+            }
         }
 
         public bool GoDark()
         {
-            lock (_gate) _darks++;
-            return true;
+            lock (_gate)
+            {
+                if (_refusing || !_open) { _open = false; return false; }
+
+                _darks++;
+                return true;
+            }
         }
 
         public bool Restore(KeyboardRecord record)
         {
-            lock (_gate) _restores++;
-            return restores;
+            lock (_gate)
+            {
+                _restores++;
+                _open = false;
+                return restores;
+            }
         }
 
-        public void Dispose() { lock (_gate) _disposed = true; }
+        public void Dispose() { lock (_gate) { _disposed = true; _open = false; } }
     }
 
     private KeyboardLighting Layer(
@@ -130,23 +159,93 @@ public class KeyboardLightingTests : IDisposable
         Assert.Equal(0, keyboard.Darks);
     }
 
+    /// <summary>The test that used to live here counted opens and asserted there had been
+    /// exactly one across three blackouts. That is the symptom, not the property: the reason
+    /// there was one open was that the layer went on believing it held a keyboard it had given
+    /// back, and every colour after the first blackout went to a closed handle in silence. What
+    /// was wanted was that the keys go dark with the screen. So that is what is asserted.</summary>
     [Fact]
-    public void TheKeyboardIsOpenedOnceAcrossManyEmissions()
+    public void EveryBlackoutTakesTheKeyboardDark()
     {
         var keyboard = new FakeKeyboard();
         using var layer = Layer(keyboard);
 
-        for (var emission = 0; emission < 3; emission++)
+        for (var emission = 1; emission <= 3; emission++)
         {
+            var before = keyboard.Shown.Count;
+
             layer.EmissionBegan();
             for (var t = 0.0; t < 12; t += 0.5) layer.Frame(t, striking: false);
+
+            Until(() => keyboard.Shown.Count > before, $"Emission {emission} to reach the keys");
+
             layer.WentDark();
+            Until(() => keyboard.Darks == emission, $"blackout {emission}");
+
             layer.LeftDark();
+            Until(() => keyboard.Restores == emission, $"hand-back {emission}");
         }
 
-        Until(() => keyboard.Restores > 0, "the keyboard to be handed back");
+        Assert.Equal(3, keyboard.Darks);
+        Assert.Equal(3, keyboard.Restores);
+    }
 
-        Assert.Equal(1, keyboard.Opens);
+    /// <summary>The debt is a fresh one on each loan. It was written down before the first
+    /// colour of the first Emission and cleared on waking; the second Emission borrows the
+    /// keyboard again, and a crash during it has to leave a record behind just as the first
+    /// would have.</summary>
+    [Fact]
+    public void ASecondLoanIsWrittenDownLikeTheFirst()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard);
+
+        layer.EmissionBegan();
+        layer.Frame(2, striking: false);
+        Until(() => layer.Owed == 1, "the first loan on the books");
+
+        layer.WentDark();
+        layer.LeftDark();
+        Until(() => layer.Owed == 0, "the first hand-back");
+        Assert.False(File.Exists(_stateFile), "the record outlived the hand-back");
+
+        var before = keyboard.Shown.Count;
+
+        layer.EmissionBegan();
+        layer.Frame(2, striking: false);
+
+        Until(() => keyboard.Shown.Count > before, "the second Emission to reach the keys");
+
+        Assert.Equal(1, layer.Owed);
+        Assert.True(File.Exists(_stateFile), "the second loan was taken without being recorded");
+    }
+
+    /// <summary>A keyboard that stops answering is given up on, not reopened. The alternative
+    /// is a device that accepts a handle and refuses every write, reopened once per rationed
+    /// colour for the rest of the session.</summary>
+    [Fact]
+    public void AKeyboardThatStopsAnsweringIsDroppedForTheSession()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard);
+
+        layer.EmissionBegan();
+        layer.Frame(2, striking: false);
+        Until(() => keyboard.Shown.Count > 0, "the first colour");
+
+        keyboard.RefuseWrites();
+
+        var opens = keyboard.Opens;
+        var shown = keyboard.Shown.Count;
+
+        for (var t = 3.0; t < 12; t += 0.25) layer.Frame(t, striking: true);
+        layer.WentDark();
+
+        Thread.Sleep(150);
+
+        Assert.Equal(shown, keyboard.Shown.Count);
+        Assert.Equal(opens, keyboard.Opens);
+        Assert.Equal(0, keyboard.Darks);
     }
 
     [Fact]

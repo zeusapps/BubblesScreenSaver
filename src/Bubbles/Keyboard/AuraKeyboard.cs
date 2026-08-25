@@ -34,6 +34,11 @@ internal sealed class AuraKeyboard : IKeyboardDevice
     /// keyboard.</param>
     internal AuraKeyboard(Func<List<HidCollection>> collections) => _collections = collections;
 
+    /// <summary>Whether the handle is still held. No state of its own -- it reports the two
+    /// fields <see cref="Open"/> sets and <see cref="Release"/> clears, which is the only
+    /// honest answer to the question.</summary>
+    public bool IsOpen => _handle is not null && _device is not null;
+
     /// <summary>Picks the lighting collection out of everything attached.
     ///
     /// Matched on vendor, usage page and usage, never on order. One keyboard presents ten
@@ -120,7 +125,10 @@ internal sealed class AuraKeyboard : IKeyboardDevice
     /// <summary>Hands the keyboard back by letting go of it.
     ///
     /// Always succeeds, because there is nothing that can fail: no packet is sent and no state
-    /// is asserted. What follows is whatever owns the lighting noticing it is free again.</summary>
+    /// is asserted. What follows is whatever owns the lighting noticing it is free again.
+    ///
+    /// This closes the device. Anything that means to write here again has to open it again,
+    /// and has to ask -- <see cref="IsOpen"/> -- rather than remember.</summary>
     public bool Restore(KeyboardRecord record)
     {
         Release();
