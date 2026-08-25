@@ -138,10 +138,14 @@ public sealed class Settings
     /// lightning flashes them, and the blackout takes them dark. Whatever the keyboard was
     /// doing before is put back on waking, and on the next run if this one ends badly.
     ///
-    /// Off by default. It needs an ASUS Aura keyboard and it needs Windows to own the lighting:
-    /// with Dynamic Lighting switched off, the vendor's own software holds the keys and every
-    /// write is accepted and thrown away, silently. On any other machine nothing happens at all,
-    /// beyond a line in the log.</summary>
+    /// Off by default. It needs an ASUS Aura keyboard, and it needs Windows' Dynamic Lighting
+    /// switched off, so that the vendor's own software owns the keys and yields to these writes.
+    /// While Dynamic Lighting is on, Windows owns the keyboard and repaints its own effect over
+    /// everything sent here: every write is accepted and thrown away, silently, and the keys
+    /// hold one colour, ignore the Emission and stay lit through the blackout. On any other
+    /// machine nothing happens at all, beyond a line in the log.
+    ///
+    /// See <see cref="StandDynamicLightingDown"/> for having that done for you.</summary>
     public bool KeyboardLighting { get; set; } = false;
 
     /// <summary>Also carry the ambient weather onto the keyboard, not just the Emission.
@@ -154,6 +158,24 @@ public sealed class Settings
     /// twelve seconds of an Emission, and for that whole time the vendor's own lighting does
     /// not run.</summary>
     public bool KeyboardWeather { get; set; } = false;
+
+    /// <summary>Switch Windows' Dynamic Lighting off for as long as the keyboard is borrowed,
+    /// and switch it back to whatever it was afterwards.
+    ///
+    /// This is what makes <see cref="KeyboardLighting"/> work without anyone going into Windows
+    /// Settings: while Dynamic Lighting is on, Windows repaints the keys with its own effect and
+    /// every write here is accepted and thrown away.
+    ///
+    /// Needs <see cref="KeyboardLighting"/> as well, and off by default on its own account,
+    /// because it is a longer reach than anything else here -- a user-visible operating system
+    /// setting, changed on your behalf, that will read as off if you go and look at it while the
+    /// screensaver is up. Whatever it found goes back on waking, on exit, and on the next run if
+    /// this one ends badly; a machine that already had Dynamic Lighting off is left off.
+    ///
+    /// With <see cref="KeyboardWeather"/> on it inherits that loan's length, so Dynamic Lighting
+    /// stays off for as long as the screensaver is on screen rather than for an Emission's
+    /// twelve seconds.</summary>
+    public bool StandDynamicLightingDown { get; set; } = false;
 
     /// <summary>Also ask monitors to enter standby during blackout. Off by default: minimum
     /// backlight is nearly as dark and cannot leave a monitor asleep if something goes wrong.

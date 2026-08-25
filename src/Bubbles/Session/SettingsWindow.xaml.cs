@@ -210,18 +210,29 @@ public partial class SettingsWindow : Window
                  + "their power button. Needs “Dim monitor backlights when dark” to be on."),
             Check("Carry an Emission onto the keyboard backlight",
                   s => s.KeyboardLighting, (s, v) => s.KeyboardLighting = v),
-            Note("ASUS Aura keyboards only, and it needs Windows’ Dynamic Lighting switched on "
-                 + "(Settings › Personalization › Dynamic Lighting). While that is off, Armoury "
-                 + "Crate owns the keys and nothing will happen — the writes are accepted and "
-                 + "discarded with no error. The keyboard is handed back on waking, and whatever "
-                 + "manages your lighting takes it from there."),
+            Note("ASUS Aura keyboards only, and it needs Windows’ Dynamic Lighting switched off "
+                 + "(Settings › Personalization › Dynamic Lighting). While that is on, Windows owns "
+                 + "the keys and repaints its own colour over everything sent here — the writes are "
+                 + "accepted and discarded with no error, so the keys hold one colour, ignore the "
+                 + "Emission and stay lit through the blackout. The keyboard is handed back on "
+                 + "waking, and whatever manages your lighting takes it from there."),
             Check("Carry the weather onto the keyboard too",
                   s => s.KeyboardWeather, (s, v) => s.KeyboardWeather = v),
             Note("Fog, rain and storms tint the keys the colour the sky is, much fainter than an "
                  + "Emission so an Emission still comes as a surprise; a clear sky leaves them "
                  + "unlit. Needs the setting above. Holds the keyboard for as long as the "
                  + "screensaver is up rather than for an Emission’s twelve seconds, and your own "
-                 + "lighting does not run for that whole time.")));
+                 + "lighting does not run for that whole time."),
+            Check("Switch Dynamic Lighting off while the keyboard is borrowed",
+                  s => s.StandDynamicLightingDown, (s, v) => s.StandDynamicLightingDown = v),
+            Note("Changes a Windows setting on your behalf and puts back whatever it found — on "
+                 + "waking, on exit, and at the next start if this one ends badly. It is what "
+                 + "makes “Carry an Emission onto the keyboard backlight” work without going "
+                 + "into Windows Settings yourself, and it needs that setting on. While it is "
+                 + "out, Settings › Personalization › Dynamic Lighting will read as off; a "
+                 + "machine that already had it off is left off. With the weather setting on it "
+                 + "lasts as long as that loan does — the whole time the screensaver is up, not "
+                 + "an Emission’s twelve seconds.")));
     }
 
     /// <summary>Moves the start delay, carrying the blackout along behind it.

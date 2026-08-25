@@ -84,6 +84,15 @@ public sealed class SettingsCompatibilityTests
     }
 
     [Fact]
+    public void A_file_written_before_the_dynamic_lighting_setting_reads_it_as_off()
+    {
+        // The longest reach in the application: it edits a user-visible Windows setting on
+        // somebody's behalf. Acquiring that by upgrading would be indefensible.
+        Assert.False(Read().StandDynamicLightingDown);
+        Assert.False(Read().Clamped().StandDynamicLightingDown);
+    }
+
+    [Fact]
     public void Clamping_an_older_file_changes_nothing()
     {
         // Every value in it is already legal, so the clamp must be a no-op. If a bound moved

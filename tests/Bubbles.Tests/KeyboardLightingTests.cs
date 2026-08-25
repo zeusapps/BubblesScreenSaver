@@ -16,9 +16,13 @@ public class KeyboardLightingTests : IDisposable
     private readonly string _stateFile = Path.Combine(
         Path.GetTempPath(), $"bubbles-keyboard-{Guid.NewGuid():N}.json");
 
+    private readonly string _lightingFile = Path.Combine(
+        Path.GetTempPath(), $"bubbles-dynamic-lighting-{Guid.NewGuid():N}.json");
+
     public void Dispose()
     {
         if (File.Exists(_stateFile)) File.Delete(_stateFile);
+        if (File.Exists(_lightingFile)) File.Delete(_lightingFile);
         GC.SuppressFinalize(this);
     }
 
@@ -108,19 +112,74 @@ public class KeyboardLightingTests : IDisposable
         public void Dispose() { lock (_gate) { _disposed = true; _open = false; } }
     }
 
+    /// <summary>Windows' Dynamic Lighting toggle, with the registry taken out.
+    ///
+    /// Counts its reads as well as its writes, because half of what is claimed here is that a
+    /// machine which has not asked for this is never even asked the question.</summary>
+    private sealed class FakeAmbientLighting(bool? enabled = true, bool writable = true) : IAmbientLighting
+    {
+        private readonly object _gate = new();
+
+        private bool? _enabled = enabled;
+        private int _reads;
+        private int _writes;
+        private bool? _recordedWhenChanged;
+
+        public int Reads { get { lock (_gate) return _reads; } }
+        public int Writes { get { lock (_gate) return _writes; } }
+        public bool? Enabled { get { lock (_gate) return _enabled; } }
+
+        /// <summary>Something to look at the instant the value is first changed, so the order
+        /// of "write it down" and "change it" can be asserted rather than assumed.</summary>
+        public Func<bool>? Watch { get; set; }
+
+        /// <summary>What <see cref="Watch"/> saw at the moment of the first write.</summary>
+        public bool? RecordedWhenChanged { get { lock (_gate) return _recordedWhenChanged; } }
+
+        public bool? Read()
+        {
+            lock (_gate)
+            {
+                _reads++;
+                return _enabled;
+            }
+        }
+
+        public bool Write(bool value)
+        {
+            lock (_gate)
+            {
+                _writes++;
+                _recordedWhenChanged ??= Watch?.Invoke();
+
+                if (!writable) return false;
+
+                _enabled = value;
+                return true;
+            }
+        }
+    }
+
     private KeyboardLighting Layer(
-        FakeKeyboard keyboard, bool on = true, bool weather = false, Action<int>? onConnect = null)
+        FakeKeyboard keyboard, bool on = true, bool weather = false, Action<int>? onConnect = null,
+        FakeAmbientLighting? lighting = null, bool standDown = false)
     {
         var connects = 0;
 
         return new KeyboardLighting(
-            new Settings { KeyboardLighting = on, KeyboardWeather = weather },
+            new Settings
+            {
+                KeyboardLighting = on,
+                KeyboardWeather = weather,
+                StandDynamicLightingDown = standDown,
+            },
             () =>
             {
                 onConnect?.Invoke(++connects);
                 return keyboard;
             },
-            _stateFile);
+            _stateFile,
+            new DynamicLightingLoan(lighting ?? new FakeAmbientLighting(), _lightingFile));
     }
 
     /// <summary>The worker is a background thread, so the assertions have to wait for it. Short
@@ -399,6 +458,231 @@ public class KeyboardLightingTests : IDisposable
 
         Assert.Equal(0, keyboard.Opens);
         Assert.Equal(0, keyboard.Restores);
+    }
+
+    // ---- standing Dynamic Lighting down ---------------------------------------------------
+
+    /// <summary>The whole point of the borrow: what was there is written down, and only then is
+    /// it changed. The fake looks at the disk from inside its own write, so this is the real
+    /// order rather than an inference from the end state.</summary>
+    [Fact]
+    public void TheValueIsWrittenDownBeforeDynamicLightingIsChanged()
+    {
+        var keyboard = new FakeKeyboard();
+        var lighting = new FakeAmbientLighting(enabled: true)
+        {
+            Watch = () => File.Exists(_lightingFile),
+        };
+
+        using var layer = Layer(keyboard, standDown: true, lighting: lighting);
+
+        layer.EmissionBegan();
+        layer.Frame(2, striking: false);
+
+        Until(() => lighting.Writes > 0, "Dynamic Lighting to be stood down");
+
+        Assert.Equal(false, lighting.Enabled);
+        Assert.Equal(1, layer.DynamicLightingOwed);
+        Assert.True(lighting.RecordedWhenChanged, "the value was changed before it was recorded");
+        Assert.Contains("AmbientLightingEnabled", File.ReadAllText(_lightingFile));
+    }
+
+    [Fact]
+    public void WakingPutsDynamicLightingBackAndClearsTheRecord()
+    {
+        var keyboard = new FakeKeyboard();
+        var lighting = new FakeAmbientLighting(enabled: true);
+
+        using var layer = Layer(keyboard, standDown: true, lighting: lighting);
+
+        layer.EmissionBegan();
+        layer.Frame(2, striking: false);
+        Until(() => lighting.Enabled == false, "Dynamic Lighting to be stood down");
+
+        layer.WentDark();
+        layer.LeftDark();
+
+        Until(() => layer.DynamicLightingOwed == 0, "the Dynamic Lighting debt to be settled");
+
+        Assert.Equal(true, lighting.Enabled);
+        Assert.False(File.Exists(_lightingFile), "the record outlived the restore");
+    }
+
+    /// <summary>The reason the recorded value is restored rather than a fixed one. Handing back
+    /// "on" here would switch on a feature this machine had deliberately turned off -- giving
+    /// back something that was never taken.</summary>
+    [Fact]
+    public void AMachineAlreadyOffIsLeftOff()
+    {
+        var keyboard = new FakeKeyboard();
+        var lighting = new FakeAmbientLighting(enabled: false);
+
+        using var layer = Layer(keyboard, standDown: true, lighting: lighting);
+
+        layer.EmissionBegan();
+        layer.Frame(2, striking: false);
+        Until(() => layer.DynamicLightingOwed == 1, "the loan on the books");
+
+        Assert.Contains("\"Enabled\":false", File.ReadAllText(_lightingFile));
+
+        layer.LeftDark();
+        Until(() => layer.DynamicLightingOwed == 0, "the debt to be settled");
+
+        Assert.Equal(false, lighting.Enabled);
+    }
+
+    /// <summary>Keyboard lighting on, this setting off: the keys are driven and no Windows
+    /// setting is touched. Not even read -- somebody who did not ask for this should not have
+    /// their personalization settings inspected on their behalf.</summary>
+    [Fact]
+    public void WithTheSettingOffDynamicLightingIsNotEvenRead()
+    {
+        var keyboard = new FakeKeyboard();
+        var lighting = new FakeAmbientLighting(enabled: true);
+
+        using var layer = Layer(keyboard, standDown: false, lighting: lighting);
+
+        layer.EmissionBegan();
+        for (var t = 0.0; t < 12; t += 0.5) layer.Frame(t, striking: false);
+        Until(() => keyboard.Shown.Count > 0, "the keys to be driven at all");
+
+        layer.WentDark();
+        layer.LeftDark();
+        Until(() => layer.Owed == 0, "the keyboard hand-back");
+
+        Assert.Equal(0, lighting.Reads);
+        Assert.Equal(0, lighting.Writes);
+        Assert.Equal(0, layer.DynamicLightingOwed);
+        Assert.False(File.Exists(_lightingFile));
+    }
+
+    /// <summary>This setting on, keyboard lighting off: it is subordinate, so it does nothing on
+    /// its own account.</summary>
+    [Fact]
+    public void WithKeyboardLightingOffDynamicLightingIsNotEvenRead()
+    {
+        var keyboard = new FakeKeyboard();
+        var lighting = new FakeAmbientLighting(enabled: true);
+
+        using var layer = Layer(keyboard, on: false, standDown: true, lighting: lighting);
+
+        layer.EmissionBegan();
+        for (var t = 0.0; t < 12; t += 0.5) layer.Frame(t, striking: false);
+        layer.WentDark();
+
+        Thread.Sleep(100);
+
+        Assert.Equal(0, lighting.Reads);
+        Assert.Equal(0, lighting.Writes);
+        Assert.Equal(0, layer.DynamicLightingOwed);
+        Assert.False(File.Exists(_lightingFile));
+    }
+
+    /// <summary>A run that died with Dynamic Lighting switched off. The record outlives it, and
+    /// the next start puts the setting back -- with both settings off, because the debt is not
+    /// conditional on the setting that incurred it.</summary>
+    [Fact]
+    public void ADynamicLightingRecordLeftByAPreviousRunIsSettledAtStartup()
+    {
+        File.WriteAllText(_lightingFile,
+            """
+            [{"Key":"AmbientLightingEnabled","Enabled":true}]
+            """);
+
+        var keyboard = new FakeKeyboard();
+        var lighting = new FakeAmbientLighting(enabled: false);
+
+        using var layer = Layer(keyboard, on: false, standDown: false, lighting: lighting);
+
+        layer.RecoverFromCrash();
+
+        Until(() => lighting.Enabled == true, "the previous run's Dynamic Lighting debt");
+        Until(() => layer.DynamicLightingOwed == 0, "the record to be cleared");
+
+        Assert.False(File.Exists(_lightingFile));
+
+        // And nothing was sent to a keyboard on the way: the two debts are settled separately.
+        Assert.Equal(0, keyboard.Opens);
+        Assert.Empty(keyboard.Shown);
+    }
+
+    /// <summary>A toggle that cannot be read is not a loan. Recording a value that was never
+    /// observed would mean writing a guess back to somebody's registry on the next wake.</summary>
+    [Fact]
+    public void AToggleThatCannotBeReadIsNotBorrowed()
+    {
+        var keyboard = new FakeKeyboard();
+        var lighting = new FakeAmbientLighting(enabled: null);
+
+        using var layer = Layer(keyboard, standDown: true, lighting: lighting);
+
+        layer.EmissionBegan();
+        layer.Frame(2, striking: false);
+        Until(() => lighting.Reads > 0, "the attempt to read it");
+
+        Thread.Sleep(50);
+
+        Assert.Equal(0, lighting.Writes);
+        Assert.Equal(0, layer.DynamicLightingOwed);
+        Assert.False(File.Exists(_lightingFile));
+    }
+
+    /// <summary>Recorded ahead of a change that was then refused. Nothing moved, so nothing is
+    /// owed -- and the next run must not find a record telling it to switch Dynamic Lighting
+    /// back on.</summary>
+    [Fact]
+    public void AChangeThatWasRefusedLeavesNothingOwed()
+    {
+        var keyboard = new FakeKeyboard();
+        var lighting = new FakeAmbientLighting(enabled: true, writable: false);
+
+        using var layer = Layer(keyboard, standDown: true, lighting: lighting);
+
+        layer.EmissionBegan();
+        layer.Frame(2, striking: false);
+        Until(() => lighting.Writes > 0, "the attempt to stand it down");
+        Until(() => layer.DynamicLightingOwed == 0, "the record to be dropped");
+
+        Assert.Equal(true, lighting.Enabled);
+        Assert.False(File.Exists(_lightingFile));
+    }
+
+    [Fact]
+    public void ExitPutsDynamicLightingBack()
+    {
+        var keyboard = new FakeKeyboard();
+        var lighting = new FakeAmbientLighting(enabled: true);
+
+        var layer = Layer(keyboard, standDown: true, lighting: lighting);
+
+        layer.EmissionBegan();
+        layer.Frame(2, striking: false);
+        Until(() => lighting.Enabled == false, "Dynamic Lighting to be stood down");
+
+        layer.Dispose();
+
+        Assert.Equal(true, lighting.Enabled);
+        Assert.Equal(0, layer.DynamicLightingOwed);
+    }
+
+    /// <summary>One loan, not one per rationed colour. Every frame passes through the same
+    /// path, and a registry write per frame would be both pointless and visible.</summary>
+    [Fact]
+    public void TheLoanIsTakenOnceForAnEmission()
+    {
+        var keyboard = new FakeKeyboard();
+        var lighting = new FakeAmbientLighting(enabled: true);
+
+        using var layer = Layer(keyboard, standDown: true, lighting: lighting);
+
+        layer.EmissionBegan();
+        for (var t = 0.0; t < 12; t += 1.0 / 30) layer.Frame(t, striking: false);
+
+        Until(() => lighting.Writes > 0, "Dynamic Lighting to be stood down");
+        Thread.Sleep(100);
+
+        Assert.Equal(1, lighting.Writes);
+        Assert.Equal(1, lighting.Reads);
     }
 
     // ---- the send policy ----------------------------------------------------------------

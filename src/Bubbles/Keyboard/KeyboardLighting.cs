@@ -34,11 +34,21 @@ internal sealed class KeyboardLighting : IDisposable
 
     private static string StateFile => Path.Combine(Settings.Directory, "keyboard-state.json");
 
+    /// <summary>Its own file, not a corner of the keyboard's. The two debts are settled
+    /// independently: a run can die owing Dynamic Lighting and no keyboard, or the reverse.</summary>
+    private static string DynamicLightingFile =>
+        Path.Combine(Settings.Directory, "dynamic-lighting-state.json");
+
     private enum Chore { None, Open, Dark, Restore, Recover }
 
     private readonly Settings _settings;
     private readonly Func<IKeyboardDevice> _open;
     private readonly PendingRestore<KeyboardRecord> _owed;
+
+    /// <summary>Windows' Dynamic Lighting, borrowed alongside the keyboard so that the writes
+    /// this layer makes are the ones the keys actually show. Never null in the application; the
+    /// tests that have no interest in it pass one over a fake toggle.</summary>
+    private readonly DynamicLightingLoan _standDown;
 
     private readonly object _gate = new();
     private readonly AutoResetEvent _wake = new(false);
@@ -81,17 +91,24 @@ internal sealed class KeyboardLighting : IDisposable
     private bool _emitting;
 
     public KeyboardLighting(Settings settings)
-        : this(settings, () => new AuraKeyboard(), StateFile)
+        : this(settings, () => new AuraKeyboard(), StateFile,
+               new DynamicLightingLoan(DynamicLightingFile))
     {
     }
 
     /// <param name="open">How to reach a keyboard. Replaced in tests, because everything
     /// worth checking in this class -- when it opens, what it sends, what it gives back --
     /// is decided above the hardware.</param>
-    internal KeyboardLighting(Settings settings, Func<IKeyboardDevice> open, string stateFile)
+    /// <param name="standDown">The Dynamic Lighting loan. Passed in rather than defaulted,
+    /// because a default would be one over the real registry, and a test that reached it would
+    /// change the personalization settings of the machine running it.</param>
+    internal KeyboardLighting(
+        Settings settings, Func<IKeyboardDevice> open, string stateFile,
+        DynamicLightingLoan standDown)
     {
         _settings = settings;
         _open = open;
+        _standDown = standDown;
         _owed = new PendingRestore<KeyboardRecord>(
             stateFile,
             record => record.Key,
@@ -102,6 +119,16 @@ internal sealed class KeyboardLighting : IDisposable
     /// <summary>Whether anything has been borrowed and not yet given back. For tests and for
     /// the log; nothing behaves differently on it.</summary>
     internal int Owed => _owed.Count;
+
+    /// <summary>Whether Dynamic Lighting is currently stood down. For tests and for the log.</summary>
+    internal int DynamicLightingOwed => _standDown.Owed;
+
+    /// <summary>Whether standing Dynamic Lighting down is asked for right now.
+    ///
+    /// Both settings, because the second is subordinate to the first: somebody who asked for an
+    /// Emission on the keys did not thereby ask for a Windows setting to be edited, and somebody
+    /// who asked for that while the keys are not being driven asked for nothing at all.</summary>
+    private bool StandingDown => _settings.KeyboardLighting && _settings.StandDynamicLightingDown;
 
     // ---- what the overlay tells it ------------------------------------------------------
 
@@ -116,10 +143,13 @@ internal sealed class KeyboardLighting : IDisposable
     public void RecoverFromCrash()
     {
         _owed.Load();
+        _standDown.Load();
 
-        if (_owed.Count == 0) return;
+        if (_owed.Count == 0 && _standDown.Owed == 0) return;
 
-        Diagnostics.Log($"keyboard lighting: {_owed.Count} keyboard(s) owed by a previous run");
+        if (_owed.Count > 0)
+            Diagnostics.Log($"keyboard lighting: {_owed.Count} keyboard(s) owed by a previous run");
+
         Queue(Chore.Recover);
     }
 
@@ -214,7 +244,7 @@ internal sealed class KeyboardLighting : IDisposable
         lock (_gate)
         {
             _stopping = true;
-            if (_owed.Count > 0) _chore = Chore.Restore;
+            if (_owed.Count > 0 || _standDown.Owed > 0) _chore = Chore.Restore;
             worker = _worker;
         }
 
@@ -422,6 +452,12 @@ internal sealed class KeyboardLighting : IDisposable
 
         _owed.Remember([record]);
 
+        // Taken here, on the worker thread, at the moment the device comes into hand -- which is
+        // EmissionBegan, six and a half seconds of buildup before the first colour matters. The
+        // other owner needs a moment to let go, and this is the earliest moment there is to give
+        // it. Nothing on screen is waiting on the registry: this thread exists to be blocked.
+        if (StandingDown) _standDown.Take();
+
         lock (_gate)
         {
             _searched = true;
@@ -469,6 +505,11 @@ internal sealed class KeyboardLighting : IDisposable
     /// to: the next <see cref="Ensure"/> asks the device rather than this method.</summary>
     private void GiveBack(string why)
     {
+        // First, and unconditionally. It is what the recovery path exists for -- a previous run
+        // that died with Dynamic Lighting off owes it back whether or not it also owes a
+        // keyboard, and whether or not either setting is still on.
+        _standDown.Settle(why);
+
         if (_owed.Count == 0) return;
 
         var device = _device;

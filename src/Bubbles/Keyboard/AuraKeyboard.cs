@@ -8,10 +8,16 @@ namespace Bubbles.Keyboard;
 /// is this and not a client for somebody's lighting server. It talks to the vendor collection
 /// the firmware exposes for exactly this purpose.
 ///
-/// **It only works while Windows owns the lighting.** With Dynamic Lighting switched off, the
-/// vendor's own software holds the keyboard and these writes are accepted and thrown away --
-/// no error, no clue, just a keyboard that does not change. That was the single most
-/// expensive thing to discover about this feature, so the setting says it and the log says it.
+/// **It only works while Windows has stood down from the lighting.** With Dynamic Lighting
+/// switched on, Windows owns the LampArray and repaints its own effect over everything written
+/// here -- a solid accent colour at full brightness -- so the keys hold that one colour, ignore
+/// the Emission, and stay lit straight through the blackout. Switch Dynamic Lighting off and
+/// the vendor's own software owns the keys, and it yields to these writes.
+///
+/// Both owners accept the write and report success, so nothing inside this process can tell
+/// which one it is talking past -- the feature has exactly one symptom, "nothing happens", and
+/// no way to name its cause from here. That is what made the direction so expensive to get
+/// wrong, and it is why the setting says it and the log says it.
 ///
 /// Giving the keyboard back is releasing it. There is no way to ask this protocol what colour
 /// the keyboard was before -- it only listens -- so nothing is recorded to restore *to*.
@@ -76,7 +82,8 @@ internal sealed class AuraKeyboard : IKeyboardDevice
 
             Diagnostics.Log($"keyboard lighting: using {_device.VendorId:X4}:{_device.ProductId:X4}, " +
                             $"{_device.OutputReportLength}-byte reports. If nothing lights up, " +
-                            "Dynamic Lighting is off and the vendor's software still owns the keys.");
+                            "Dynamic Lighting is on and Windows is repainting over these writes " +
+                            "-- switch it off in Settings > Personalization > Dynamic Lighting.");
 
             return new KeyboardRecord
             {
