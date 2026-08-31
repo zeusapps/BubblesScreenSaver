@@ -120,6 +120,19 @@ public sealed class OverlayWindow : Window
     /// <summary>Raised the moment the blackout ends.</summary>
     public event Action? LeftDark;
 
+    /// <summary>Raised once the overlay has actually left the screen, by either route -- the fade
+    /// out, or the immediate hide.
+    ///
+    /// The second of the two ways the screensaver ends, and the one <see cref="LeftDark"/> cannot
+    /// speak for: an artifacts stage that the user came back to before it ever reached black
+    /// leaves no blackout to leave. Anything borrowed for the length of the screensaver is owed
+    /// back here as much as there.
+    ///
+    /// Deliberately a separate event rather than a second <see cref="LeftDark"/>, because that one
+    /// also carries the request to lock the workstation. A lock must stay unreachable from a path
+    /// on which the screen never went black.</summary>
+    public event Action? LeftScreen;
+
     /// <summary>Raised as an Emission starts, before its first frame is drawn. Anything that
     /// wants to follow the Emission has until the first tremor to get ready.</summary>
     public event Action? EmissionBegan;
@@ -614,6 +627,10 @@ public sealed class OverlayWindow : Window
     public void HideBubbles(bool immediate = false)
     {
         if (!_shown && !immediate) return;
+
+        // Whether anything was actually on screen to leave. HideBubbles(immediate: true) is also
+        // how the window gets out of the way at startup, and nothing is owed back for that.
+        var wasShown = _shown;
         _shown = false;
 
         // Leaving means you touched something, so the pointer is coming back anyway --
@@ -624,16 +641,25 @@ public sealed class OverlayWindow : Window
         {
             _root.BeginAnimation(UIElement.OpacityProperty, null);
             _root.Opacity = 0;
-            Visibility = Visibility.Hidden;
-            Suspended = true;
-            Collapse();
+            Hidden(wasShown);
             return;
         }
 
-        Fade(to: 0, seconds: 0.35, thenHide: true);
+        Fade(to: 0, seconds: 0.35, thenHide: true, wasShown);
     }
 
-    private void Fade(double to, double seconds, bool thenHide)
+    /// <summary>Off the screen: hidden, suspended, and shrunk to a pixel. Both hide paths end
+    /// here, so there is one place that knows the overlay has gone.</summary>
+    private void Hidden(bool wasShown)
+    {
+        Visibility = Visibility.Hidden;
+        Suspended = true;
+        Collapse();
+
+        if (wasShown) Raise(LeftScreen, nameof(LeftScreen));
+    }
+
+    private void Fade(double to, double seconds, bool thenHide, bool wasShown = false)
     {
         var animation = new DoubleAnimation(to, TimeSpan.FromSeconds(Math.Max(0.01, seconds)))
         {
@@ -646,9 +672,7 @@ public sealed class OverlayWindow : Window
             animation.Completed += (_, _) =>
             {
                 if (_shown) return;   // shown again mid-fade -- leave it alone
-                Visibility = Visibility.Hidden;
-                Suspended = true;
-                Collapse();
+                Hidden(wasShown);
             };
         }
 

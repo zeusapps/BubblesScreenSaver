@@ -32,6 +32,27 @@ internal sealed class KeyboardLighting : IDisposable
     /// and letting the process go. The record on disk is the backstop if this runs out.</summary>
     private static readonly TimeSpan ShutdownGrace = TimeSpan.FromSeconds(3);
 
+    /// <summary>How often black is said again in the first moments of a blackout.
+    ///
+    /// The blackout's other half runs on the displays -- a mode change, then backlight and
+    /// standby commands over DDC/CI -- and that is what has been observed to provoke the vendor's
+    /// software into repainting the keys, five to ten seconds after the screen goes black. This
+    /// is the window that covers it.</summary>
+    private static readonly TimeSpan Settling = TimeSpan.FromSeconds(2);
+
+    /// <summary>How long the settling cadence lasts. Long enough to outlive the display work,
+    /// which is finished within a few seconds of the screen reaching black.</summary>
+    private static readonly TimeSpan SettlesAfter = TimeSpan.FromSeconds(30);
+
+    /// <summary>The cadence for the rest of the blackout, which may be hours.
+    ///
+    /// Twenty seconds is not chosen for symmetry: it is what `DisplayBlackout._whileDark` already
+    /// uses against the same class of problem on the same machine, so there is one number to
+    /// reason about rather than two. This covers the repaints with no obvious cause -- the vendor's
+    /// service restarting, a power transition, a keyboard that came back from selective suspend
+    /// showing whatever its firmware had stored.</summary>
+    private static readonly TimeSpan Holding = TimeSpan.FromSeconds(20);
+
     private static string StateFile => Path.Combine(Settings.Directory, "keyboard-state.json");
 
     /// <summary>Its own file, not a corner of the keyboard's. The two debts are settled
@@ -52,6 +73,13 @@ internal sealed class KeyboardLighting : IDisposable
 
     private readonly object _gate = new();
     private readonly AutoResetEvent _wake = new(false);
+
+    /// <summary>The two cadences of the blackout's re-assert, and the boundary between them.
+    /// Fields rather than the constants directly so the tests can drive the loop in milliseconds
+    /// instead of waiting out half a minute of it.</summary>
+    private readonly TimeSpan _settling;
+    private readonly TimeSpan _settlesAfter;
+    private readonly TimeSpan _holding;
 
     private Thread? _worker;
     private bool _stopping;
@@ -90,6 +118,17 @@ internal sealed class KeyboardLighting : IDisposable
     /// are raised on.</summary>
     private bool _emitting;
 
+    /// <summary>Worker thread only. Whether the screen is black and the keys are being held that
+    /// way, and when they were taken there.
+    ///
+    /// One `GoDark()` is not enough. The device is opened with shared access -- the lighting is
+    /// not ours exclusively -- so another owner can repaint the keys at any moment, and the
+    /// protocol has no read, so there is no way to notice that it has. The only answer available
+    /// from in here is to say it again, often enough that being wrong is brief.</summary>
+    private bool _holdingDark;
+
+    private long _darkAt;
+
     public KeyboardLighting(Settings settings)
         : this(settings, () => new AuraKeyboard(), StateFile,
                new DynamicLightingLoan(DynamicLightingFile))
@@ -102,13 +141,20 @@ internal sealed class KeyboardLighting : IDisposable
     /// <param name="standDown">The Dynamic Lighting loan. Passed in rather than defaulted,
     /// because a default would be one over the real registry, and a test that reached it would
     /// change the personalization settings of the machine running it.</param>
+    /// <param name="settling">The re-assert cadence for the first moments of a blackout.</param>
+    /// <param name="settlesAfter">How long that cadence lasts.</param>
+    /// <param name="holding">The cadence for the rest of the blackout.</param>
     internal KeyboardLighting(
         Settings settings, Func<IKeyboardDevice> open, string stateFile,
-        DynamicLightingLoan standDown)
+        DynamicLightingLoan standDown,
+        TimeSpan? settling = null, TimeSpan? settlesAfter = null, TimeSpan? holding = null)
     {
         _settings = settings;
         _open = open;
         _standDown = standDown;
+        _settling = settling ?? Settling;
+        _settlesAfter = settlesAfter ?? SettlesAfter;
+        _holding = holding ?? Holding;
         _owed = new PendingRestore<KeyboardRecord>(
             stateFile,
             record => record.Key,
@@ -339,7 +385,22 @@ internal sealed class KeyboardLighting : IDisposable
     {
         while (true)
         {
-            _wake.WaitOne();
+            // Unbounded unless the screen is black. A blackout bounds the wait, and the timeout
+            // is the whole of the re-assert: nobody has asked for anything, and the keys are
+            // still meant to be off, so say so again in case somebody else has said otherwise.
+            if (!_wake.WaitOne(_holdingDark ? Cadence() : Timeout.InfiniteTimeSpan))
+            {
+                try
+                {
+                    Reassert();
+                }
+                catch (Exception ex)
+                {
+                    Diagnostics.Log($"keyboard lighting: {ex}");
+                }
+
+                continue;
+            }
 
             Chore chore;
             KeyColor? colour;
@@ -362,6 +423,7 @@ internal sealed class KeyboardLighting : IDisposable
                 {
                     case Chore.Restore:
                     case Chore.Recover:
+                        _holdingDark = false;
                         GiveBack(chore == Chore.Recover ? "a previous run" : "awake");
                         break;
 
@@ -369,7 +431,12 @@ internal sealed class KeyboardLighting : IDisposable
                     // write means the device has let go of itself, and a layer that ignores
                     // that goes on sending colours nobody will ever see.
                     case Chore.Dark:
-                        if (Ensure() && !_device!.GoDark()) Lost("the blackout");
+                        if (!Ensure()) break;   // nothing to send to is nothing to hold
+
+                        _holdingDark = true;
+                        _darkAt = Environment.TickCount64;
+
+                        if (!_device!.GoDark()) Lost("the blackout");
                         break;
 
                     // Opening is not an alternative to showing a colour, it is what has to
@@ -377,6 +444,12 @@ internal sealed class KeyboardLighting : IDisposable
                     // first frame are a frame apart -- and handling only one of them dropped
                     // the opening colour of every Emission.
                     default:
+                        // A colour means something is on screen again, so there is no blackout
+                        // left to hold. Nothing sends one during a blackout -- the overlay is
+                        // suspended and raises no frames -- but the hold is cleared where the
+                        // colour arrives rather than trusting that.
+                        _holdingDark = false;
+
                         if ((chore == Chore.Open || colour is not null) && Ensure() && colour is { } wanted
                             && !_device!.Show(wanted))
                             Lost("a colour");
@@ -398,6 +471,51 @@ internal sealed class KeyboardLighting : IDisposable
                 return;
             }
         }
+    }
+
+    /// <summary>How long to wait before saying black again.
+    ///
+    /// Two cadences, because the repaint is not random. The blackout's other half runs on the
+    /// displays and is over within a few seconds of the screen going black, and that is when the
+    /// keys have been seen to be taken; the hours after it are when they are least likely to be.
+    /// So: closely for the first half-minute, then at the interval the monitor backlight's own
+    /// re-assert already uses against the same class of problem.</summary>
+    private TimeSpan Cadence() => CadenceAt(Environment.TickCount64 - _darkAt);
+
+    /// <summary>The cadence as a function of how long the screen has been black, which is the
+    /// whole of the rule and can be checked without a clock or a thread.</summary>
+    internal TimeSpan CadenceAt(long sinceDarkMs) =>
+        sinceDarkMs < _settlesAfter.TotalMilliseconds ? _settling : _holding;
+
+    /// <summary>Says black again, to a keyboard that may have been repainted since it was last
+    /// told.
+    ///
+    /// Deliberately not through <see cref="SendPolicy"/>. That exists to suppress a colour which
+    /// has not moved, and this colour has not moved -- that is the entire point of sending it.
+    ///
+    /// Through <see cref="Ensure"/> rather than around it, so a device that has let go of its
+    /// handle mid-blackout is opened again and gets its black, while a session that never found a
+    /// keyboard costs a branch and sends nothing.</summary>
+    private void Reassert()
+    {
+        if (!Ensure())
+        {
+            // Either there was never a keyboard, or the one there was has gone. Nothing to hold.
+            _holdingDark = false;
+            return;
+        }
+
+        if (!_device!.GoDark())
+        {
+            Lost("holding the blackout");
+            return;
+        }
+
+        // How long it has been black, because the open question about this feature is whether the
+        // two cadences are the right ones, and that is only answerable from a log of a real
+        // blackout. Free when BUBBLES_LOG is off, like everything else here.
+        Diagnostics.Log($"keyboard lighting: black again, " +
+                        $"{(Environment.TickCount64 - _darkAt) / 1000}s into the blackout");
     }
 
     /// <summary>A keyboard in hand, or nothing to be done.
@@ -476,6 +594,11 @@ internal sealed class KeyboardLighting : IDisposable
     /// rationed colour. Failure is decided once here, as everywhere else in this class.</summary>
     private void Lost(string what)
     {
+        // Whatever the screen is doing, there is nothing left to hold it against. Without this a
+        // lost keyboard leaves the worker waking every cadence for the rest of the blackout to
+        // find out again that there is nothing there.
+        _holdingDark = false;
+
         IKeyboardDevice? gone;
 
         lock (_gate)

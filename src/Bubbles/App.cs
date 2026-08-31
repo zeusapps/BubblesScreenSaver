@@ -105,6 +105,15 @@ public sealed class App : Application
             reachedBlack = false;
         };
 
+        // The other way the screensaver ends: an artifacts stage the user came back to before it
+        // ever reached black. The keyboard is taken there too, once keyboard weather is on, and
+        // was owed back from a path that only LeftDark could reach -- so it was never given back
+        // at all, and a Windows setting stayed changed for the rest of the run.
+        //
+        // Only the hand-back hangs off this. The workstation lock deliberately stays on LeftDark:
+        // coming back to your desk must not be a way to lock your own machine.
+        _overlay.LeftScreen += _keyboard.LeftDark;
+
         _overlay.Show();                       // creates the HWND so the Win32 setup can run
         _overlay.HideBubbles(immediate: true); // ...then gets out of the way until you go idle
 

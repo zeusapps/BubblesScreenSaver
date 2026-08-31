@@ -64,6 +64,11 @@ public class KeyboardLightingTests : IDisposable
         /// does. Like the real device, refusing a write also lets go of it.</summary>
         public void RefuseWrites() { lock (_gate) _refusing = true; }
 
+        /// <summary>Lets go of the handle without being asked and without failing anything, as a
+        /// device does when something below it takes it away -- a suspend, a re-enumeration. It
+        /// will open again; it just is not open now.</summary>
+        public void LetGo() { lock (_gate) _open = false; }
+
         public KeyboardRecord? Open()
         {
             lock (_gate)
@@ -160,9 +165,12 @@ public class KeyboardLightingTests : IDisposable
         }
     }
 
+    /// <param name="cadence">How often the blackout says black again. Long enough by default that
+    /// no test sees a second one unless it asked for it -- a re-assert arriving in the middle of a
+    /// test about something else would make the counts it asserts a race.</param>
     private KeyboardLighting Layer(
         FakeKeyboard keyboard, bool on = true, bool weather = false, Action<int>? onConnect = null,
-        FakeAmbientLighting? lighting = null, bool standDown = false)
+        FakeAmbientLighting? lighting = null, bool standDown = false, TimeSpan? cadence = null)
     {
         var connects = 0;
 
@@ -179,7 +187,10 @@ public class KeyboardLightingTests : IDisposable
                 return keyboard;
             },
             _stateFile,
-            new DynamicLightingLoan(lighting ?? new FakeAmbientLighting(), _lightingFile));
+            new DynamicLightingLoan(lighting ?? new FakeAmbientLighting(), _lightingFile),
+            settling: cadence ?? TimeSpan.FromMinutes(10),
+            settlesAfter: TimeSpan.FromMinutes(10),
+            holding: cadence ?? TimeSpan.FromMinutes(10));
     }
 
     /// <summary>The worker is a background thread, so the assertions have to wait for it. Short
@@ -844,6 +855,155 @@ public class KeyboardLightingTests : IDisposable
         Weather(layer, Settled(Zone.Weather.Fog));
 
         Until(() => keyboard.Shown.Count > after, "the weather to resume");
+    }
+
+    // ---- holding the blackout ------------------------------------------------------------
+
+    [Fact]
+    public void TheKeysAreHeldDarkForAsLongAsTheScreenIs()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, cadence: TimeSpan.FromMilliseconds(15));
+
+        layer.WentDark();
+
+        // One GoDark is what used to happen, and five to ten seconds later the vendor's software
+        // had the keys back. Black is a request, not a lock: it has to be made again.
+        Until(() => keyboard.Darks > 1, "the blackout to be held");
+        Assert.True(keyboard.IsOpen, "the device is still held, not released between re-asserts");
+    }
+
+    [Fact]
+    public void NothingIsReassertedOnceTheBlackoutEnds()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, cadence: TimeSpan.FromMilliseconds(15));
+
+        layer.WentDark();
+        Until(() => keyboard.Darks > 1, "the blackout to be held");
+
+        layer.LeftDark();
+        Until(() => layer.Owed == 0, "the hand-back");
+
+        var after = keyboard.Darks;
+        Thread.Sleep(100);   // many cadences' worth
+
+        Assert.Equal(after, keyboard.Darks);
+    }
+
+    [Fact]
+    public void AReassertThatIsRefusedEndsTheSessionsLighting()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, cadence: TimeSpan.FromMilliseconds(15));
+
+        layer.WentDark();
+        Until(() => keyboard.Darks == 1, "the blackout");
+
+        keyboard.RefuseWrites();
+
+        // The refusal is noticed on the next re-assert, and that is the end of it: no reopening,
+        // no loop of open-fail-open-fail once every cadence for the rest of the blackout.
+        Until(() => !keyboard.IsOpen, "the refusal to be noticed");
+
+        var opens = keyboard.Opens;
+        Thread.Sleep(100);
+
+        Assert.Equal(opens, keyboard.Opens);
+    }
+
+    [Fact]
+    public void ADeviceThatLetGoDuringTheBlackoutIsOpenedAgain()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, cadence: TimeSpan.FromMilliseconds(15));
+
+        layer.WentDark();
+        Until(() => keyboard.Darks == 1, "the blackout");
+
+        var darks = keyboard.Darks;
+        keyboard.LetGo();
+
+        // Handed back is not the same as refused. The search succeeded and the keyboard is still
+        // there, so the black lands again rather than the session giving up on it.
+        Until(() => keyboard.Darks > darks, "the black to land again");
+        Assert.True(keyboard.Opens > 1, "the device was opened again");
+    }
+
+    [Fact]
+    public void TheReassertIsSoonerAtFirst()
+    {
+        var keyboard = new FakeKeyboard();
+
+        // The real cadences, not the test ones: this is the rule, and it is a pure function of
+        // how long the screen has been black.
+        using var layer = new KeyboardLighting(
+            new Settings { KeyboardLighting = true },
+            () => keyboard,
+            _stateFile,
+            new DynamicLightingLoan(new FakeAmbientLighting(), _lightingFile));
+
+        Assert.True(layer.CadenceAt(0) < layer.CadenceAt(60_000),
+                    "the display work that provokes the repaint is over within the first moments");
+    }
+
+    [Fact]
+    public void WithTheSettingOffTheBlackoutIsNeverHeld()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, on: false, cadence: TimeSpan.FromMilliseconds(15));
+
+        layer.WentDark();
+        Thread.Sleep(100);   // many cadences' worth, on a machine that asked for none of this
+
+        Assert.Equal(0, keyboard.Opens);
+        Assert.Equal(0, keyboard.Darks);
+    }
+
+    [Fact]
+    public void TheArtifactsStageGivesTheKeyboardBackWithoutABlackout()
+    {
+        var keyboard = new FakeKeyboard();
+        var lighting = new FakeAmbientLighting(enabled: true);
+        using var layer = Layer(keyboard, weather: true, lighting: lighting, standDown: true);
+
+        Weather(layer, Settled(Zone.Weather.Fog));
+        Until(() => keyboard.Shown.Count > 0, "the weather to reach the keys");
+        Assert.Equal(false, lighting.Enabled);
+
+        // The screensaver leaves the screen without ever having reached black -- you came back
+        // to your desk before the blackout. That is the end of the loan just as much as waking
+        // from a blackout is, and it used to end nothing at all.
+        layer.LeftDark();
+
+        Until(() => layer.Owed == 0, "the keyboard to be given back");
+        Until(() => layer.DynamicLightingOwed == 0, "Dynamic Lighting to be given back");
+        Assert.Equal(true, lighting.Enabled);
+        Assert.False(keyboard.IsOpen);
+    }
+
+    [Fact]
+    public void TheSecondHandBackOfAWakeFindsNothingOwed()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard);
+
+        layer.EmissionBegan();
+        layer.Frame(2, striking: false);
+        Until(() => keyboard.Shown.Count > 0, "the first colour");
+
+        layer.WentDark();
+        Until(() => keyboard.Darks == 1, "the blackout");
+
+        // A blackout that ends normally hands back twice: once on leaving the black, and again a
+        // moment later when the overlay leaves the screen. The second finds an empty ledger.
+        layer.LeftDark();
+        Until(() => layer.Owed == 0, "the hand-back");
+
+        layer.LeftDark();
+        Thread.Sleep(50);
+
+        Assert.Equal(1, keyboard.Restores);
     }
 
     [Fact]
