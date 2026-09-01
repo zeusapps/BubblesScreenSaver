@@ -19,12 +19,25 @@ so the system cannot detect that this has happened and SHALL assert rather than 
 same stance already taken toward a monitor backlight that drifts back up during a blackout, with
 the reading step removed because this hardware has none.
 
-The interval SHALL be shorter for an initial period after the screen reaches black than it is
-afterwards. The blackout's own work on the displays -- a mode change, then backlight and standby
-commands over DDC/CI -- is what has been observed to provoke the repaint, and it is over within the
-first half-minute; the longer interval that follows exists for repaints that have no such
-explanation, and SHALL match the one the display blackout already uses for the same class of
-problem.
+The interval SHALL relax while nothing is happening, from a floor to a ceiling, and SHALL return
+to the floor whenever the machine passes through something that may have disturbed the keys.
+
+The clock it relaxes against SHALL be the time since the last such disturbance, not the time since
+the screen went black. A ramp measured from the start of the blackout reaches its ceiling within
+the first minute and a blackout is hours, so all but a handful of its waits happen at the ceiling
+either way; measured from the last disturbance, the attentive phase happens again every time there
+is a reason for it.
+
+Reaching black SHALL itself count as a disturbance, since that is when the blackout's work on the
+displays begins.
+
+The system SHALL treat as a disturbance those transitions it can actually observe -- the session
+locking or unlocking, a power mode change, a display reconfiguration -- and SHALL say black again
+at once when one arrives rather than waiting out the interval in hand. It cannot observe the
+repaint itself, and SHALL NOT be designed as though it could.
+
+The ceiling SHALL be the same interval the display blackout already uses against the same class of
+problem, and is the longest a repaint can sit on the keys unanswered.
 
 Re-asserting SHALL stop when the screen is no longer black, and SHALL stop when there is no longer
 a keyboard to send to.
@@ -54,10 +67,29 @@ a keyboard to send to.
 - **WHEN** another owner of the lighting writes its own colour while the screen is black
 - **THEN** the system SHALL send black again without having been told that it happened
 
-#### Scenario: Sooner at first
-- **WHEN** the sends made in the first half-minute of a blackout are compared with those made in a
-  later half-minute of the same blackout
-- **THEN** there SHALL have been more of them in the first
+#### Scenario: Attention relaxes while nothing happens
+- **WHEN** successive intervals are taken with no disturbance between them
+- **THEN** each SHALL be longer than the one before it
+
+#### Scenario: The ceiling is a bound, not a tendency
+- **WHEN** the interval is relaxed repeatedly without limit
+- **THEN** it SHALL stop at the ceiling and stay there
+
+#### Scenario: A disturbance arrives
+- **WHEN** the machine reports a transition that may have disturbed the keys
+- **AND** the screen is black
+- **THEN** black SHALL be sent at once, without waiting out the interval in hand
+- **AND** the interval SHALL return to the floor
+
+#### Scenario: A disturbance is not a colour
+- **WHEN** a disturbance wakes the system during a blackout
+- **THEN** the blackout SHALL still be held afterwards
+- **AND** no colour SHALL have been sent
+
+#### Scenario: A disturbance on a machine that never took a keyboard
+- **WHEN** a disturbance arrives and no keyboard has ever been borrowed this session
+- **THEN** no device SHALL be opened
+- **AND** no thread SHALL be started for it
 
 #### Scenario: The blackout ends
 - **WHEN** the overlay leaves the blackout

@@ -4,6 +4,9 @@
       `SettlesAfter` (30s) and `Holding` (20s), each documented with what it is for -- the first
       two cover the display work that provokes the repaint, the third matches
       `DisplayBlackout._whileDark` against the same class of problem.
+      **Superseded by 6.1**: the first night in production showed the repaint arriving hours in,
+      not in the first half-minute, so the two fixed cadences became a ramp measured from the last
+      disturbance.
 - [x] 1.2 Make the interval injectable through the internal constructor, defaulting to those
       constants, so the tests can drive the loop in milliseconds rather than waiting half a minute.
 - [x] 1.3 Add worker-thread-only state for the hold: whether the screen is dark, and when it went
@@ -70,3 +73,24 @@
       monitor attached ("no external display has HDR on"), so it proves the re-assert runs and stops
       correctly; whether it wins the keys back from Armoury Crate still needs a blackout with the
       monitor connected, which is the open question in the design.
+
+## 6. The ramp, after the first night in production (v1.18.1)
+
+- [x] 6.1 Replace the two fixed cadences with a ramp: `Floor` (2s), `Ceiling` (20s), `Growth`
+      (1.5), relaxing after every re-assert and returning to the floor on a disturbance.
+- [x] 6.2 Measure the ramp from the last disturbance rather than from the start of the blackout --
+      an overnight log showed the repaint arriving hours in, which is where a blackout-clocked ramp
+      is at its ceiling and least attentive.
+- [x] 6.3 Add `MachineEvents`, reporting the transitions that can actually be observed: session
+      switch, power mode, display settings. Raised on the SystemEvents thread with subscriber
+      failures contained, since that thread is shared with the rest of the process.
+- [x] 6.4 Add `KeyboardLighting.Disturbed(what)`: resets the ramp and says black at once, starts no
+      worker on a machine that has never borrowed a keyboard, and is not a chore -- it does not
+      replace what was asked for.
+- [x] 6.5 Fix the latent defect this exposed: a bare wake fell through to the colour arm and
+      cleared `_holdingDark`, so any wake that carried no chore would have cancelled the hold.
+- [x] 6.6 Log the cadence beside the elapsed time, so the next night's log says how relaxed the
+      ramp was when a green was seen.
+- [x] 6.7 Tests: the ramp relaxes and stops at the ceiling; a disturbance sends black without
+      waiting; a disturbance does not end the blackout or send a colour; a disturbance on a machine
+      with no loan opens nothing and starts no thread.

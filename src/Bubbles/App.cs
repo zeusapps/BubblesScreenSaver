@@ -114,6 +114,13 @@ public sealed class App : Application
         // coming back to your desk must not be a way to lock your own machine.
         _overlay.LeftScreen += _keyboard.LeftDark;
 
+        // The keyboard cannot be read, so it cannot be checked -- only asserted. These are the
+        // moments worth asserting at: whatever else reasserts its own lighting tends to do it
+        // when the session changes hands, when the machine resumes, or when the displays are
+        // reconfigured. Costs nothing on a machine that never borrows a keyboard.
+        MachineEvents.Disturbed += _keyboard.Disturbed;
+        MachineEvents.Watch();
+
         _overlay.Show();                       // creates the HWND so the Win32 setup can run
         _overlay.HideBubbles(immediate: true); // ...then gets out of the way until you go idle
 

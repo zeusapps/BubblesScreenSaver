@@ -188,9 +188,8 @@ public class KeyboardLightingTests : IDisposable
             },
             _stateFile,
             new DynamicLightingLoan(lighting ?? new FakeAmbientLighting(), _lightingFile),
-            settling: cadence ?? TimeSpan.FromMinutes(10),
-            settlesAfter: TimeSpan.FromMinutes(10),
-            holding: cadence ?? TimeSpan.FromMinutes(10));
+            floor: cadence ?? TimeSpan.FromMinutes(10),
+            ceiling: cadence ?? TimeSpan.FromMinutes(10));
     }
 
     /// <summary>The worker is a background thread, so the assertions have to wait for it. Short
@@ -931,20 +930,84 @@ public class KeyboardLightingTests : IDisposable
     }
 
     [Fact]
-    public void TheReassertIsSoonerAtFirst()
+    public void TheReassertRelaxesButNeverPastTheCeiling()
     {
         var keyboard = new FakeKeyboard();
 
-        // The real cadences, not the test ones: this is the rule, and it is a pure function of
-        // how long the screen has been black.
+        // The real ends of the ramp, not the test ones: this is the rule, and it is a pure
+        // function of the last cadence.
         using var layer = new KeyboardLighting(
             new Settings { KeyboardLighting = true },
             () => keyboard,
             _stateFile,
             new DynamicLightingLoan(new FakeAmbientLighting(), _lightingFile));
 
-        Assert.True(layer.CadenceAt(0) < layer.CadenceAt(60_000),
-                    "the display work that provokes the repaint is over within the first moments");
+        var cadence = TimeSpan.FromSeconds(2);
+
+        for (var step = 0; step < 3; step++)
+        {
+            var next = layer.Relax(cadence);
+            Assert.True(next > cadence, "attention relaxes while nothing is happening");
+            cadence = next;
+        }
+
+        // And stops relaxing. The ceiling is the longest a repaint can sit on the keys before
+        // anything says otherwise, so it has to be a bound rather than a tendency.
+        for (var step = 0; step < 20; step++) cadence = layer.Relax(cadence);
+
+        Assert.Equal(TimeSpan.FromSeconds(20), cadence);
+        Assert.Equal(cadence, layer.Relax(cadence));
+    }
+
+    [Fact]
+    public void ADisturbanceSaysBlackAgainWithoutWaitingOutTheRamp()
+    {
+        var keyboard = new FakeKeyboard();
+
+        // A ramp far slower than the test can wait for: the only thing that can produce a second
+        // black here is the disturbance itself.
+        using var layer = Layer(keyboard, cadence: TimeSpan.FromMinutes(10));
+
+        layer.WentDark();
+        Until(() => keyboard.Darks == 1, "the blackout");
+
+        layer.Disturbed("a test");
+
+        Until(() => keyboard.Darks > 1, "the disturbance to reach the keys");
+    }
+
+    [Fact]
+    public void ADisturbanceDoesNotEndTheBlackout()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, cadence: TimeSpan.FromMilliseconds(15));
+
+        layer.WentDark();
+        Until(() => keyboard.Darks > 1, "the blackout to be held");
+
+        layer.Disturbed("a test");
+        Thread.Sleep(50);
+
+        // A bare wake asks for nothing. It must not be mistaken for a colour arriving, which is
+        // what would cancel the hold and leave the keys to whatever painted them next.
+        var darks = keyboard.Darks;
+        Until(() => keyboard.Darks > darks, "the blackout to still be held afterwards");
+        Assert.Empty(keyboard.Shown);
+    }
+
+    [Fact]
+    public void ADisturbanceOnAMachineThatNeverTookAKeyboardCostsNothing()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, cadence: TimeSpan.FromMilliseconds(15));
+
+        layer.Disturbed("a test");
+        Thread.Sleep(100);
+
+        // No worker, no loan, nothing to reassert. The overwhelming majority of machines spend
+        // their whole lives here and must not start a thread for a session lock.
+        Assert.Equal(0, keyboard.Opens);
+        Assert.Equal(0, keyboard.Darks);
     }
 
     [Fact]

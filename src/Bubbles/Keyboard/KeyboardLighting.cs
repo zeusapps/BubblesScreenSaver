@@ -32,26 +32,28 @@ internal sealed class KeyboardLighting : IDisposable
     /// and letting the process go. The record on disk is the backstop if this runs out.</summary>
     private static readonly TimeSpan ShutdownGrace = TimeSpan.FromSeconds(3);
 
-    /// <summary>How often black is said again in the first moments of a blackout.
+    /// <summary>How soon black is said again just after something might have disturbed the keys.
     ///
-    /// The blackout's other half runs on the displays -- a mode change, then backlight and
-    /// standby commands over DDC/CI -- and that is what has been observed to provoke the vendor's
-    /// software into repainting the keys, five to ten seconds after the screen goes black. This
-    /// is the window that covers it.</summary>
-    private static readonly TimeSpan Settling = TimeSpan.FromSeconds(2);
+    /// The floor of the ramp, and where the ramp is sent back to whenever the machine passes
+    /// through one of the transitions <see cref="MachineEvents"/> reports.</summary>
+    private static readonly TimeSpan Floor = TimeSpan.FromSeconds(2);
 
-    /// <summary>How long the settling cadence lasts. Long enough to outlive the display work,
-    /// which is finished within a few seconds of the screen reaching black.</summary>
-    private static readonly TimeSpan SettlesAfter = TimeSpan.FromSeconds(30);
-
-    /// <summary>The cadence for the rest of the blackout, which may be hours.
+    /// <summary>The slowest the re-assert ever gets, once nothing has happened for a while.
     ///
-    /// Twenty seconds is not chosen for symmetry: it is what `DisplayBlackout._whileDark` already
-    /// uses against the same class of problem on the same machine, so there is one number to
-    /// reason about rather than two. This covers the repaints with no obvious cause -- the vendor's
-    /// service restarting, a power transition, a keyboard that came back from selective suspend
-    /// showing whatever its firmware had stored.</summary>
-    private static readonly TimeSpan Holding = TimeSpan.FromSeconds(20);
+    /// Not chosen for symmetry: it is what `DisplayBlackout._whileDark` already uses against the
+    /// same class of problem on the same machine, so there is one number to reason about rather
+    /// than two. It is also the worst case for how long a repaint can be left on the keys, which
+    /// is the number to lower if a green is ever seen with no disturbance logged near it.</summary>
+    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(20);
+
+    /// <summary>How fast the ramp relaxes. Seven steps from the floor to the ceiling, which is
+    /// about a minute of attention after each disturbance.
+    ///
+    /// A ramp measured from the *start of the blackout* would be worth almost nothing: it reaches
+    /// the ceiling inside the first minute and a blackout is hours, so every wakeup but a handful
+    /// happens at the ceiling either way. Measured from the last disturbance it earns its keep,
+    /// because the attentive phase happens again every time there is a reason for it.</summary>
+    private const double Growth = 1.5;
 
     private static string StateFile => Path.Combine(Settings.Directory, "keyboard-state.json");
 
@@ -74,12 +76,10 @@ internal sealed class KeyboardLighting : IDisposable
     private readonly object _gate = new();
     private readonly AutoResetEvent _wake = new(false);
 
-    /// <summary>The two cadences of the blackout's re-assert, and the boundary between them.
-    /// Fields rather than the constants directly so the tests can drive the loop in milliseconds
-    /// instead of waiting out half a minute of it.</summary>
-    private readonly TimeSpan _settling;
-    private readonly TimeSpan _settlesAfter;
-    private readonly TimeSpan _holding;
+    /// <summary>The ends of the re-assert ramp. Fields rather than the constants directly so the
+    /// tests can drive the loop in milliseconds instead of waiting out a minute of it.</summary>
+    private readonly TimeSpan _floor;
+    private readonly TimeSpan _ceiling;
 
     private Thread? _worker;
     private bool _stopping;
@@ -129,6 +129,18 @@ internal sealed class KeyboardLighting : IDisposable
 
     private long _darkAt;
 
+    /// <summary>Worker thread only. How long to wait before saying black again, ramping from the
+    /// floor to the ceiling while nothing happens and sent back to the floor when something
+    /// does.</summary>
+    private TimeSpan _cadence;
+
+    /// <summary>Set from <see cref="MachineEvents"/>, on its thread, under the gate. Says the
+    /// machine passed through something that may have taken the keys, so the ramp starts again
+    /// and black is said now rather than at the end of the current wait.</summary>
+    private bool _disturbed;
+
+    private string? _disturbedBy;
+
     public KeyboardLighting(Settings settings)
         : this(settings, () => new AuraKeyboard(), StateFile,
                new DynamicLightingLoan(DynamicLightingFile))
@@ -141,20 +153,17 @@ internal sealed class KeyboardLighting : IDisposable
     /// <param name="standDown">The Dynamic Lighting loan. Passed in rather than defaulted,
     /// because a default would be one over the real registry, and a test that reached it would
     /// change the personalization settings of the machine running it.</param>
-    /// <param name="settling">The re-assert cadence for the first moments of a blackout.</param>
-    /// <param name="settlesAfter">How long that cadence lasts.</param>
-    /// <param name="holding">The cadence for the rest of the blackout.</param>
+    /// <param name="floor">How soon the re-assert repeats just after a disturbance.</param>
+    /// <param name="ceiling">The slowest it gets once nothing has happened for a while.</param>
     internal KeyboardLighting(
         Settings settings, Func<IKeyboardDevice> open, string stateFile,
-        DynamicLightingLoan standDown,
-        TimeSpan? settling = null, TimeSpan? settlesAfter = null, TimeSpan? holding = null)
+        DynamicLightingLoan standDown, TimeSpan? floor = null, TimeSpan? ceiling = null)
     {
         _settings = settings;
         _open = open;
         _standDown = standDown;
-        _settling = settling ?? Settling;
-        _settlesAfter = settlesAfter ?? SettlesAfter;
-        _holding = holding ?? Holding;
+        _floor = floor ?? Floor;
+        _ceiling = ceiling ?? Ceiling;
         _owed = new PendingRestore<KeyboardRecord>(
             stateFile,
             record => record.Key,
@@ -283,6 +292,28 @@ internal sealed class KeyboardLighting : IDisposable
         Queue(Chore.Restore);
     }
 
+    /// <summary>The machine passed through something that may have disturbed the keys -- a lock,
+    /// a resume, a display being reconfigured.
+    ///
+    /// Not a chore: it does not replace whatever else has been asked for, and it does not start a
+    /// worker. A machine that has never taken a keyboard has nothing to reassert and nothing to
+    /// wake up for, which is the common case and must stay free.
+    ///
+    /// Called from the <c>SystemEvents</c> thread.</summary>
+    public void Disturbed(string what)
+    {
+        lock (_gate)
+        {
+            // No worker means no loan, ever, on this machine. Nothing to say black to.
+            if (_stopping || _worker is null) return;
+
+            _disturbed = true;
+            _disturbedBy = what;
+        }
+
+        _wake.Set();
+    }
+
     public void Dispose()
     {
         Thread? worker;
@@ -388,7 +419,7 @@ internal sealed class KeyboardLighting : IDisposable
             // Unbounded unless the screen is black. A blackout bounds the wait, and the timeout
             // is the whole of the re-assert: nobody has asked for anything, and the keys are
             // still meant to be off, so say so again in case somebody else has said otherwise.
-            if (!_wake.WaitOne(_holdingDark ? Cadence() : Timeout.InfiniteTimeSpan))
+            if (!_wake.WaitOne(_holdingDark ? _cadence : Timeout.InfiniteTimeSpan))
             {
                 try
                 {
@@ -405,20 +436,38 @@ internal sealed class KeyboardLighting : IDisposable
             Chore chore;
             KeyColor? colour;
             bool stopping;
+            bool disturbed;
+            string? disturbedBy;
 
             lock (_gate)
             {
                 chore = _chore;
                 colour = _queued;
                 stopping = _stopping;
+                disturbed = _disturbed;
+                disturbedBy = _disturbedBy;
 
                 _chore = Chore.None;
                 _queued = null;
                 _queuedUrgent = false;
+                _disturbed = false;
+                _disturbedBy = null;
             }
 
             try
             {
+                // Before the chore, and never instead of one. A disturbance says the keys may
+                // have been repainted since they were last told; it says nothing about what was
+                // asked for, so it is answered and then the wake is handled as it would be.
+                if (disturbed && _holdingDark)
+                {
+                    Diagnostics.Log($"keyboard lighting: {disturbedBy} may have taken the keys; " +
+                                    "saying black again");
+
+                    _cadence = _floor;
+                    Reassert();
+                }
+
                 switch (chore)
                 {
                     case Chore.Restore:
@@ -436,6 +485,11 @@ internal sealed class KeyboardLighting : IDisposable
                         _holdingDark = true;
                         _darkAt = Environment.TickCount64;
 
+                        // Reaching black is itself the most recent disturbance: it is the moment
+                        // the blackout's work on the displays begins, and that work has been seen
+                        // to provoke the repaint. So the ramp starts at the floor.
+                        _cadence = _floor;
+
                         if (!_device!.GoDark()) Lost("the blackout");
                         break;
 
@@ -444,14 +498,15 @@ internal sealed class KeyboardLighting : IDisposable
                     // first frame are a frame apart -- and handling only one of them dropped
                     // the opening colour of every Emission.
                     default:
-                        // A colour means something is on screen again, so there is no blackout
-                        // left to hold. Nothing sends one during a blackout -- the overlay is
-                        // suspended and raises no frames -- but the hold is cleared where the
-                        // colour arrives rather than trusting that.
+                        // A bare wake -- a disturbance, already dealt with above -- asks for
+                        // nothing and must not cancel the blackout it woke us during.
+                        if (chore != Chore.Open && colour is null) break;
+
+                        // A colour, or an Emission about to send one, means something is on
+                        // screen again and there is no blackout left to hold.
                         _holdingDark = false;
 
-                        if ((chore == Chore.Open || colour is not null) && Ensure() && colour is { } wanted
-                            && !_device!.Show(wanted))
+                        if (Ensure() && colour is { } wanted && !_device!.Show(wanted))
                             Lost("a colour");
                         break;
                 }
@@ -480,12 +535,15 @@ internal sealed class KeyboardLighting : IDisposable
     /// keys have been seen to be taken; the hours after it are when they are least likely to be.
     /// So: closely for the first half-minute, then at the interval the monitor backlight's own
     /// re-assert already uses against the same class of problem.</summary>
-    private TimeSpan Cadence() => CadenceAt(Environment.TickCount64 - _darkAt);
+    /// <summary>The next wait, one step further from the last disturbance. Never past the
+    /// ceiling, which is both the slowest this gets and the longest a repaint can sit on the
+    /// keys unanswered.</summary>
+    internal TimeSpan Relax(TimeSpan cadence)
+    {
+        var next = TimeSpan.FromTicks((long)(cadence.Ticks * Growth));
 
-    /// <summary>The cadence as a function of how long the screen has been black, which is the
-    /// whole of the rule and can be checked without a clock or a thread.</summary>
-    internal TimeSpan CadenceAt(long sinceDarkMs) =>
-        sinceDarkMs < _settlesAfter.TotalMilliseconds ? _settling : _holding;
+        return next > _ceiling ? _ceiling : next;
+    }
 
     /// <summary>Says black again, to a keyboard that may have been repainted since it was last
     /// told.
@@ -511,11 +569,15 @@ internal sealed class KeyboardLighting : IDisposable
             return;
         }
 
-        // How long it has been black, because the open question about this feature is whether the
-        // two cadences are the right ones, and that is only answerable from a log of a real
-        // blackout. Free when BUBBLES_LOG is off, like everything else here.
+        // How long it has been black and how relaxed the ramp has become, because the open
+        // question about this feature is whether the ceiling is low enough, and that is only
+        // answerable from the log of a real blackout beside somebody watching the keys. Free when
+        // BUBBLES_LOG is off, like everything else here.
         Diagnostics.Log($"keyboard lighting: black again, " +
-                        $"{(Environment.TickCount64 - _darkAt) / 1000}s into the blackout");
+                        $"{(Environment.TickCount64 - _darkAt) / 1000}s into the blackout, " +
+                        $"next in {_cadence.TotalSeconds:0.#}s");
+
+        _cadence = Relax(_cadence);
     }
 
     /// <summary>A keyboard in hand, or nothing to be done.
