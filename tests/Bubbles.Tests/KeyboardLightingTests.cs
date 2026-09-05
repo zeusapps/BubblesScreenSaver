@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 
 using Bubbles.Keyboard;
 using Bubbles.Zone;
@@ -39,6 +39,11 @@ public class KeyboardLightingTests : IDisposable
         private readonly object _gate = new();
         private readonly List<KeyColor> _shown = [];
 
+        /// <summary>When each black landed. The interval between re-asserts is a requirement in
+        /// its own right now that it no longer ramps, and the only way to check it from out here
+        /// is to time the arrivals.</summary>
+        private readonly List<long> _darkTimes = [];
+
         // Read under the lock, not just written under it. A plain int field polled from the
         // test thread can be hoisted out of the wait loop, and the test then waits forever for
         // a change it has already been told about.
@@ -58,6 +63,16 @@ public class KeyboardLightingTests : IDisposable
         public IReadOnlyList<KeyColor> Shown
         {
             get { lock (_gate) return _shown.ToList(); }
+        }
+
+        /// <summary>The gaps between successive blacks, in milliseconds.</summary>
+        public IReadOnlyList<long> DarkGaps
+        {
+            get
+            {
+                lock (_gate)
+                    return _darkTimes.Zip(_darkTimes.Skip(1), (a, b) => b - a).ToList();
+            }
         }
 
         /// <summary>Makes every write from here on fail, as a keyboard that has been unplugged
@@ -100,6 +115,7 @@ public class KeyboardLightingTests : IDisposable
                 if (_refusing || !_open) { _open = false; return false; }
 
                 _darks++;
+                _darkTimes.Add(Environment.TickCount64);
                 return true;
             }
         }
@@ -188,8 +204,7 @@ public class KeyboardLightingTests : IDisposable
             },
             _stateFile,
             new DynamicLightingLoan(lighting ?? new FakeAmbientLighting(), _lightingFile),
-            floor: cadence ?? TimeSpan.FromMinutes(10),
-            ceiling: cadence ?? TimeSpan.FromMinutes(10));
+            cadence: cadence ?? TimeSpan.FromMinutes(10));
     }
 
     /// <summary>The worker is a background thread, so the assertions have to wait for it. Short
@@ -930,42 +945,40 @@ public class KeyboardLightingTests : IDisposable
     }
 
     [Fact]
-    public void TheReassertRelaxesButNeverPastTheCeiling()
+    public void TheReassertIntervalDoesNotDrift()
     {
         var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, cadence: TimeSpan.FromMilliseconds(30));
 
-        // The real ends of the ramp, not the test ones: this is the rule, and it is a pure
-        // function of the last cadence.
-        using var layer = new KeyboardLighting(
-            new Settings { KeyboardLighting = true },
-            () => keyboard,
-            _stateFile,
-            new DynamicLightingLoan(new FakeAmbientLighting(), _lightingFile));
+        layer.WentDark();
 
-        var cadence = TimeSpan.FromSeconds(2);
+        // Seven blacks is six gaps. Under the ramp this replaced -- half again each time -- the
+        // sixth gap would be seven and a half times the first, which is what this rules out.
+        Until(() => keyboard.Darks >= 7, "several re-asserts");
 
-        for (var step = 0; step < 3; step++)
-        {
-            var next = layer.Relax(cadence);
-            Assert.True(next > cadence, "attention relaxes while nothing is happening");
-            cadence = next;
-        }
+        var gaps = keyboard.DarkGaps;
+        var min = gaps.Min();
+        var max = gaps.Max();
 
-        // And stops relaxing. The ceiling is the longest a repaint can sit on the keys before
-        // anything says otherwise, so it has to be a bound rather than a tendency.
-        for (var step = 0; step < 20; step++) cadence = layer.Relax(cadence);
-
-        Assert.Equal(TimeSpan.FromSeconds(20), cadence);
-        Assert.Equal(cadence, layer.Relax(cadence));
+        // Measured against the smallest gap rather than the first. The first is the noisiest --
+        // it carries the device open and the state file write -- and anchoring the tolerance to
+        // it was slack enough to let a real ramp through.
+        //
+        // Generous all the same, because this is a BelowNormal thread on a machine running a
+        // test suite. It is the *shape* that is the requirement, and it survives the noise: the
+        // ramp this replaced would put the sixth gap at seven and a half times the first.
+        Assert.True(
+            max <= min * 3 + 120,
+            $"gaps stay flat, but {string.Join("ms, ", gaps)}ms");
     }
 
     [Fact]
-    public void ADisturbanceSaysBlackAgainWithoutWaitingOutTheRamp()
+    public void ADisturbanceSaysBlackAgainWithoutWaitingOutTheInterval()
     {
         var keyboard = new FakeKeyboard();
 
-        // A ramp far slower than the test can wait for: the only thing that can produce a second
-        // black here is the disturbance itself.
+        // An interval far longer than the test can wait for: the only thing that can produce a
+        // second black here is the disturbance itself.
         using var layer = Layer(keyboard, cadence: TimeSpan.FromMinutes(10));
 
         layer.WentDark();
@@ -974,6 +987,31 @@ public class KeyboardLightingTests : IDisposable
         layer.Disturbed("a test");
 
         Until(() => keyboard.Darks > 1, "the disturbance to reach the keys");
+    }
+
+    [Fact]
+    public void ADisturbanceDoesNotChangeTheIntervalThatFollowsIt()
+    {
+        var keyboard = new FakeKeyboard();
+        using var layer = Layer(keyboard, cadence: TimeSpan.FromMilliseconds(30));
+
+        layer.WentDark();
+        Until(() => keyboard.Darks >= 4, "the interval before");
+
+        layer.Disturbed("a test");
+
+        Until(() => keyboard.Darks >= 9, "the interval after");
+
+        // The disturbance itself lands early by design -- that is the whole of what it does now --
+        // so what is checked is the interval either side of it, not the gap it sits in. Under the
+        // ramp this replaced, a disturbance also sent the interval back to its floor, and the two
+        // sides would differ.
+        var gaps = keyboard.DarkGaps;
+        var before = gaps.Take(3).Min();
+
+        Assert.All(gaps.Skip(5), gap => Assert.True(
+            gap <= before * 3 + 120,
+            $"the interval is unchanged by a disturbance, but {string.Join("ms, ", gaps)}ms"));
     }
 
     [Fact]

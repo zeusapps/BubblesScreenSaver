@@ -1,4 +1,4 @@
-namespace Bubbles.Interop;
+﻿namespace Bubbles.Interop;
 
 /// <summary>The moments when something may have changed underneath this application.
 ///
@@ -7,9 +7,15 @@ namespace Bubbles.Interop;
 /// unlocking, the power source changing or a resume completing, the displays being reconfigured.
 ///
 /// It exists because the keyboard cannot be read. There is no way to ask an Aura keyboard what
-/// colour it is showing, so a lighting layer that wants to keep the keys black has to choose
-/// between writing constantly and writing at the right moments. These are the right moments --
-/// or the closest thing to them observable from here.
+/// colour it is showing, so a lighting layer that wants to keep the keys black cannot wait to be
+/// told it has been repainted -- it writes constantly, on a flat interval, and that is what
+/// actually keeps the keys dark.
+///
+/// This does not change that interval. It only says when not to wait out the one in hand: these
+/// are the moments other software tends to reassert itself, so they are the moments worth writing
+/// at immediately rather than up to an interval late. A small saving, and the honest size of the
+/// claim -- an earlier version of this comment offered these as an alternative to writing
+/// constantly, which they never were.
 ///
 /// A single subscription for the life of the process, taken once. <c>SystemEvents</c> raises on
 /// its own thread, so anything hung off this must be safe to call from one.</summary>
