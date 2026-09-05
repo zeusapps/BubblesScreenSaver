@@ -1,6 +1,25 @@
-## MODIFIED Requirements
+## REMOVED Requirements
 
 ### Requirement: The blackout takes the keyboard dark
+
+**Reason**: Re-stated below without the ramp. The interval between re-asserts was specified as
+relaxing from a floor to a ceiling and returning to the floor on a disturbance; a week of
+production showed 99.2% of all waits falling at the ceiling, because the observable transitions
+the ramp relaxed from are rare and a blackout is hours. The ceiling was therefore the only
+interval that materially existed, and specifying a ramp around it described behaviour the system
+did not meaningfully have. Two scenarios go with it -- "Attention relaxes while nothing happens"
+and "The ceiling is a bound, not a tendency" -- because neither describes anything that still
+occurs.
+
+**Migration**: None. Everything the requirement asked for other than the shape of the interval is
+carried across unchanged into "The blackout holds the keyboard dark", including every other
+scenario. The name moves with it: what the requirement is mostly about is the holding, not the
+first packet. No persisted state, setting, or wire format is involved, and the difference is visible
+only within a single blackout.
+
+## ADDED Requirements
+
+### Requirement: The blackout holds the keyboard dark
 
 The system SHALL take the keyboard's lighting off when the overlay goes dark, rather than
 releasing the device, because releasing it returns the keyboard to whatever its owner was
